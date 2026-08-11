@@ -147,17 +147,33 @@ export function Create({ onReady, onBack }: { onReady: (code: string) => void; o
           />
         </Field>
 
-        <Field label="Seats">
-          <Choice
-            value={seats}
-            onChange={setSeats}
-            options={[
-              { value: 4, label: '4' },
-              { value: 6, label: '6' },
-              { value: 9, label: '9' },
-              { value: 10, label: '10' },
-            ]}
-          />
+        <Field
+          label="Seats at the table"
+          hint="Any number from 2 to 10. Empty seats are fine — friends can join later."
+        >
+          <div className="flex items-center gap-3">
+            <Button
+              size="lg"
+              variant="dark"
+              disabled={seats <= 2}
+              onClick={() => setSeats((n) => Math.max(2, n - 1))}
+              aria-label="One fewer seat"
+            >
+              −
+            </Button>
+            <div className="flex-1 rounded-2xl border border-white/10 bg-black/30 py-2.5 text-center">
+              <span className="text-3xl font-black text-[var(--color-gold)]">{seats}</span>
+            </div>
+            <Button
+              size="lg"
+              variant="dark"
+              disabled={seats >= 10}
+              onClick={() => setSeats((n) => Math.min(10, n + 1))}
+              aria-label="One more seat"
+            >
+              +
+            </Button>
+          </div>
         </Field>
       </div>
 
