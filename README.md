@@ -138,20 +138,45 @@ and is not part of the production build.
 
 ## 7. Deploy
 
-The app is a static bundle plus one Edge Function.
+The app is a static bundle plus one Edge Function. All three options below are
+free.
 
-```bash
-npm run build     # outputs dist/
-```
+### GitHub Pages (no other account needed)
 
-**Vercel** — import the repo, set the two `VITE_` environment variables, and
-deploy. [`vercel.json`](vercel.json) already rewrites all routes to
-`index.html` so shared links like `/g/K7PX` work.
+Push the repo, then in **Settings → Secrets and variables → Actions → New
+repository secret** add:
 
-**Netlify** — build command `npm run build`, publish directory `dist`, same two
-environment variables. [`public/_redirects`](public/_redirects) handles routing.
+| Secret                   | Value                          |
+| ------------------------ | ------------------------------ |
+| `VITE_SUPABASE_URL`      | your Supabase project URL      |
+| `VITE_SUPABASE_ANON_KEY` | your Supabase `anon` key       |
 
-Deploy the function once per project (it is independent of the frontend host):
+Then **Settings → Pages → Source: GitHub Actions**. Every push to `main` runs
+[the workflow](.github/workflows/deploy.yml), which tests, builds for the
+`/<repo>/` subpath, and publishes to
+`https://<user>.github.io/<repo>/`.
+
+Both values end up in the public bundle. That is by design: the `anon` key is
+meant to be public and RLS limits it to reading game rows. Never put the
+**service role** key in a secret used by this workflow.
+
+Pages has no rewrite rules, so [`scripts/make-404.mjs`](scripts/make-404.mjs)
+emits a `404.html` that hands deep links like `/g/K7PX` back to the app.
+
+### Vercel
+
+Import the repo, set the two `VITE_` environment variables, deploy.
+[`vercel.json`](vercel.json) already rewrites all routes to `index.html`.
+
+### Netlify
+
+Build command `npm run build`, publish directory `dist`, same two variables.
+[`public/_redirects`](public/_redirects) handles routing.
+
+### The backend, wherever you host the frontend
+
+Deploy the function once per Supabase project — it is independent of the
+frontend host:
 
 ```bash
 supabase functions deploy game
