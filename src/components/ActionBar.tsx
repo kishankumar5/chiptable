@@ -13,11 +13,28 @@ interface Props {
 }
 
 /**
+ * Seconds since the table last did anything. Not a shot clock — nothing is
+ * enforced — it just tells the table whether someone is thinking or gone.
+ */
+function useWaitingSeconds(since: number, active: boolean) {
+  const [secs, setSecs] = useState(0);
+  useEffect(() => {
+    if (!active) return setSecs(0);
+    const tick = () => setSecs(Math.max(0, Math.round((Date.now() - since) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [since, active]);
+  return secs;
+}
+
+/**
  * The bottom of the screen answers one question at a time: what do I press?
  * Three buttons when it's your turn, a status line when it isn't.
  */
 export function ActionBar({ state, me, isHost, send }: Props) {
   const [betting, setBetting] = useState(false);
+  const waiting = useWaitingSeconds(state.updatedAt, Boolean(state.turn));
   const myTurn = state.turn === me.id;
   const call = toCall(state, me.id);
   const minTo = minRaiseTo(state, me.id);
@@ -63,6 +80,7 @@ export function ActionBar({ state, me, isHost, send }: Props) {
 
   if (!myTurn) {
     const waitingOn = state.players.find((p) => p.id === state.turn);
+    const slow = waiting > 30;
     return (
       <div className="px-3 pb-[calc(0.75rem+var(--sab))] pt-2">
         <div className="panel px-4 py-3.5">
@@ -77,6 +95,11 @@ export function ActionBar({ state, me, isHost, send }: Props) {
                   : state.awaitingPayout
                     ? 'Awarding pot…'
                     : 'Ready'}
+                {waitingOn && slow && (
+                  <span className="ml-2 text-xs font-bold tabular-nums text-amber-400/80">
+                    {Math.floor(waiting / 60)}:{String(waiting % 60).padStart(2, '0')}
+                  </span>
+                )}
               </div>
             </div>
             <div className="text-right">
@@ -87,8 +110,10 @@ export function ActionBar({ state, me, isHost, send }: Props) {
             </div>
           </div>
 
-          {/* A player who walked away would otherwise freeze the whole table. */}
-          {isHost && waitingOn && (
+          {/* A player who walked away would otherwise freeze the whole table.
+              Offered only once they are visibly overdue, so nobody folds a
+              player who is simply thinking. */}
+          {isHost && waitingOn && slow && (
             <Button
               size="sm"
               variant="ghost"

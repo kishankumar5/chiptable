@@ -8,6 +8,14 @@ import { playerId } from '../lib/session.ts';
 
 export type Connection = 'connecting' | 'live' | 'dropped' | 'missing';
 
+/** How long to let a dropped socket try to recover before alarming anyone. */
+const GRACE_MS = 4000;
+/** How long without any contact before we quietly check the connection. */
+const STALE_MS = 20_000;
+
+/** Commands the app sends on its own. Their failures stay out of the player's way. */
+const BACKGROUND_COMMANDS = new Set(['heartbeat', 'level-tick']);
+
 export interface Game {
   state: GameState | null;
   connection: Connection;
@@ -31,21 +39,35 @@ export function useGame(code: string): Game {
   const version = useRef(0);
   const channelRef = useRef<RealtimeChannel | null>(null);
 
-  const apply = useCallback((next: GameState, v: number) => {
-    // Realtime and HTTP responses race constantly; version ordering settles it.
-    if (v < version.current) return;
-    version.current = v;
-    setState(next);
+  // Connection is judged by evidence, not by a single socket event. Any proof
+  // that we reached the server — a realtime payload, a fetch, an accepted
+  // action — means we are live, whatever the channel last reported.
+  const lastContact = useRef(0);
+
+  const markLive = useCallback(() => {
+    lastContact.current = Date.now();
+    setConnection((c) => (c === 'missing' ? c : 'live'));
   }, []);
+
+  const apply = useCallback(
+    (next: GameState, v: number) => {
+      markLive();
+      // Realtime and HTTP responses race constantly; version ordering settles it.
+      if (v < version.current) return;
+      version.current = v;
+      setState(next);
+    },
+    [markLive],
+  );
 
   const load = useCallback(async () => {
     try {
       const res = await fetchGame(code);
       apply(res.state, res.version);
-      setConnection((c) => (c === 'live' ? c : 'connecting'));
     } catch (e) {
       const msg = e instanceof Error ? e.message : '';
-      setConnection(msg.includes("doesn't exist") ? 'missing' : 'dropped');
+      if (msg.includes("doesn't exist")) setConnection('missing');
+      else setConnection((c) => (c === 'missing' ? c : 'dropped'));
     }
   }, [code, apply]);
 
@@ -67,10 +89,15 @@ export function useGame(code: string): Game {
       .subscribe((status) => {
         if (cancelled) return;
         if (status === 'SUBSCRIBED') {
-          setConnection('live');
+          markLive();
           void load(); // catch up on anything missed while subscribing
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          setConnection((c) => (c === 'missing' ? c : 'dropped'));
+          // Sockets drop and silently re-establish all the time, especially when
+          // a phone locks. Confirm we are really cut off before saying so.
+          setTimeout(() => {
+            if (cancelled) return;
+            void load();
+          }, GRACE_MS);
         }
       });
 
@@ -80,7 +107,17 @@ export function useGame(code: string): Game {
       void supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [code, load, apply]);
+  }, [code, load, apply, markLive]);
+
+  // Watchdog: if nothing has reached us for a while, quietly check in. This is
+  // what clears a stale banner without the player touching anything.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastContact.current > STALE_MS) void load();
+    }, STALE_MS / 2);
+    return () => clearInterval(id);
+  }, [load]);
 
   // Phone unlocked, tab refocused, wifi back — resync without a page reload.
   useEffect(() => {
@@ -101,6 +138,9 @@ export function useGame(code: string): Game {
     async (partial: Omit<Command, 'actor'>): Promise<boolean> => {
       const cmd: Command = { ...partial, actor: me } as Command;
       const before = state;
+      // Housekeeping the player never asked for shouldn't interrupt them if it
+      // fails — it just retries on its own schedule.
+      const silent = BACKGROUND_COMMANDS.has(cmd.type);
 
       if (before) {
         try {
@@ -108,7 +148,7 @@ export function useGame(code: string): Game {
           setState(reduce(before, { ...cmd, now: Date.now() }));
         } catch (e) {
           if (e instanceof GameError) {
-            setError(e.message);
+            if (!silent) setError(e.message);
             return false;
           }
         }
@@ -120,7 +160,9 @@ export function useGame(code: string): Game {
         return true;
       } catch (e) {
         if (before) setState(before); // roll the prediction back
-        setError(e instanceof Error ? e.message : "That didn't go through. Try again.");
+        if (!silent) {
+          setError(e instanceof Error ? e.message : "That didn't go through. Try again.");
+        }
         void load();
         return false;
       }

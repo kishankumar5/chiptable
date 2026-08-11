@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { buzz, play } from '../lib/sound.ts';
 
@@ -146,6 +147,13 @@ export function Sheet({
 }
 
 export function Toast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  // Clears itself. A stale error sitting on screen makes a working game look
+  // broken — the timer re-arms whenever a new message arrives.
+  useEffect(() => {
+    const id = setTimeout(onDismiss, 4000);
+    return () => clearTimeout(id);
+  }, [message, onDismiss]);
+
   return (
     <div className="pointer-events-none fixed inset-x-0 top-[calc(0.75rem+var(--sat))] z-[60] flex justify-center px-4">
       <div className="animate-[pop_180ms_ease-out] pointer-events-auto flex items-center gap-3 rounded-2xl border border-red-400/30 bg-[#2a1414] px-4 py-3 text-sm font-semibold text-red-100 shadow-xl">
