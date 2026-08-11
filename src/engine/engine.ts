@@ -450,6 +450,19 @@ function applyMove(s: GameState, p: Player, cmd: Command, t: number) {
   progress(s, t);
 }
 
+/**
+ * Fold a player who has walked away, then let the hand carry on. Their chips
+ * stay in the pot, exactly as if they had folded themselves.
+ */
+function foldAway(s: GameState, p: Player, t: number) {
+  p.folded = true;
+  p.acted = true;
+  log(s, 'fold', `${p.name} folded — away from the table`, t);
+  // Advance only when the table was actually waiting on them, or when they
+  // were the last player standing between the pot and its winner.
+  if (s.turn === p.id || live(s).length === 1) progress(s, t);
+}
+
 /* ------------------------------------------------------------------ */
 /* Payouts                                                             */
 /* ------------------------------------------------------------------ */
@@ -678,12 +691,25 @@ export function reduce(prev: GameState, cmd: Command): GameState {
       break;
     }
 
+    case 'force-fold': {
+      // Someone walked away mid-hand and the table is stuck on their turn.
+      assertHost(s, cmd.actor);
+      const p = need(s, cmd.target);
+      if (!s.street) fail('No hand is in progress.');
+      if (!p.inHand || p.folded) fail('They are not in this hand.');
+      foldAway(s, p, t);
+      break;
+    }
+
     case 'remove-player': {
       assertHost(s, cmd.actor);
       const p = need(s, cmd.target);
-      if (p.inHand && s.street) fail('Wait until the hand is over.');
+      // Mid-hand they are folded out first, so play can carry on without them.
+      // Chips already in the pot stay there; the rest goes with them.
+      if (p.inHand && s.street && !p.folded) foldAway(s, p, t);
       p.leftTable = true;
       p.sittingOut = true;
+      p.inHand = false;
       p.cashedOut += p.stack;
       p.stack = 0;
       log(s, 'host', `${p.name} left the table`, t);

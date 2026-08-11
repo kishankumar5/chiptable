@@ -108,6 +108,7 @@ export type ActionType =
   | 'cash-out'
   | 'move-seat'
   | 'remove-player'
+  | 'force-fold'
   | 'set-dealer'
   | 'claim-host'
   | 'toggle-pause'

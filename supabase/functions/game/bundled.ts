@@ -330,6 +330,12 @@ function applyMove(s, p, cmd, t) {
   }
   progress(s, t);
 }
+function foldAway(s, p, t) {
+  p.folded = true;
+  p.acted = true;
+  log(s, "fold", `${p.name} folded \u2014 away from the table`, t);
+  if (s.turn === p.id || live(s).length === 1) progress(s, t);
+}
 function award(s, cmd, t) {
   if (!s.awaitingPayout) fail("There is no pot to award right now.");
   const assignments = cmd.awards ?? [];
@@ -520,12 +526,21 @@ function reduce(prev, cmd) {
       p.seat = seat;
       break;
     }
+    case "force-fold": {
+      assertHost(s, cmd.actor);
+      const p = need(s, cmd.target);
+      if (!s.street) fail("No hand is in progress.");
+      if (!p.inHand || p.folded) fail("They are not in this hand.");
+      foldAway(s, p, t);
+      break;
+    }
     case "remove-player": {
       assertHost(s, cmd.actor);
       const p = need(s, cmd.target);
-      if (p.inHand && s.street) fail("Wait until the hand is over.");
+      if (p.inHand && s.street && !p.folded) foldAway(s, p, t);
       p.leftTable = true;
       p.sittingOut = true;
+      p.inHand = false;
       p.cashedOut += p.stack;
       p.stack = 0;
       log(s, "host", `${p.name} left the table`, t);

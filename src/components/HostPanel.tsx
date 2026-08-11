@@ -253,9 +253,9 @@ export function HostPanel({ state, me, isHost, hostGone, open, onClose, send }: 
                           >
                             Move seat
                           </Button>
+                          {/* Works mid-hand too: they get folded out first. */}
                           <Button
                             variant="danger"
-                            disabled={midHand}
                             onClick={() => void send({ type: 'remove-player', target: p.id })}
                           >
                             Remove

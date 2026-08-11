@@ -8,6 +8,7 @@ import { buzz, play } from '../lib/sound.ts';
 interface Props {
   state: GameState;
   me: Player;
+  isHost: boolean;
   send: (cmd: Omit<Command, 'actor'>) => Promise<boolean>;
 }
 
@@ -15,7 +16,7 @@ interface Props {
  * The bottom of the screen answers one question at a time: what do I press?
  * Three buttons when it's your turn, a status line when it isn't.
  */
-export function ActionBar({ state, me, send }: Props) {
+export function ActionBar({ state, me, isHost, send }: Props) {
   const [betting, setBetting] = useState(false);
   const myTurn = state.turn === me.id;
   const call = toCall(state, me.id);
@@ -64,21 +65,40 @@ export function ActionBar({ state, me, send }: Props) {
     const waitingOn = state.players.find((p) => p.id === state.turn);
     return (
       <div className="px-3 pb-[calc(0.75rem+var(--sab))] pt-2">
-        <div className="panel flex items-center justify-between px-4 py-3.5">
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--color-muted)]">
-              {state.street ? 'Waiting' : 'Between hands'}
+        <div className="panel px-4 py-3.5">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--color-muted)]">
+                {state.street ? 'Waiting' : 'Between hands'}
+              </div>
+              <div className="text-base font-black text-ink">
+                {waitingOn
+                  ? `${waitingOn.name} to act…`
+                  : state.awaitingPayout
+                    ? 'Awarding pot…'
+                    : 'Ready'}
+              </div>
             </div>
-            <div className="text-base font-black text-ink">
-              {waitingOn ? `${waitingOn.name} to act…` : state.awaitingPayout ? 'Awarding pot…' : 'Ready'}
+            <div className="text-right">
+              <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--color-muted)]">
+                Your stack
+              </div>
+              <div className="text-xl font-black text-[var(--color-gold)]">{fmt(me.stack)}</div>
             </div>
           </div>
-          <div className="text-right">
-            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--color-muted)]">
-              Your stack
-            </div>
-            <div className="text-xl font-black text-[var(--color-gold)]">{fmt(me.stack)}</div>
-          </div>
+
+          {/* A player who walked away would otherwise freeze the whole table. */}
+          {isHost && waitingOn && (
+            <Button
+              size="sm"
+              variant="ghost"
+              full
+              className="mt-2.5"
+              onClick={() => void send({ type: 'force-fold', target: waitingOn.id })}
+            >
+              {waitingOn.name} gone? Fold for them
+            </Button>
+          )}
         </div>
       </div>
     );

@@ -235,6 +235,78 @@ test('reset-hand returns every chip to its owner', () => {
   assert.ok(s.players.every((p) => p.stack === 1000), 'everyone is whole again');
 });
 
+test('the host can fold for a player who walked away mid-hand', () => {
+  let s = table(4);
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  const stuck = s.turn;
+  const potBefore = totalPot(s);
+
+  s = reduce(s, { type: 'force-fold', actor: HOST, target: stuck });
+
+  assert.equal(s.players.find((p) => p.id === stuck).folded, true, 'they are folded');
+  assert.notEqual(s.turn, stuck, 'the table moved on');
+  assert.ok(s.turn, 'someone else is now to act');
+  assert.equal(totalPot(s), potBefore, 'their blind stays in the pot');
+  assert.equal(chipsInPlay(s), 4000);
+});
+
+test('folding for an absent player can finish the hand outright', () => {
+  let s = table(3);
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  // Fold everyone but one player, the last two via the host override.
+  s = act(s, 'fold');
+  const remaining = s.players.filter((p) => p.inHand && !p.folded);
+  s = reduce(s, { type: 'force-fold', actor: HOST, target: s.turn });
+  assert.equal(s.street, null, 'hand is over');
+  assert.equal(s.pot, 0, 'pot was paid out');
+  assert.equal(chipsInPlay(s), 3000);
+  assert.ok(remaining.length >= 2);
+});
+
+test('removing a player mid-hand folds them and unblocks the table', () => {
+  let s = table(4);
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  const stuck = s.turn;
+  const stackLeaving = s.players.find((p) => p.id === stuck).stack;
+
+  s = reduce(s, { type: 'remove-player', actor: HOST, target: stuck });
+  const gone = s.players.find((p) => p.id === stuck);
+
+  assert.equal(gone.leftTable, true);
+  assert.equal(gone.stack, 0, 'they took their remaining chips');
+  assert.equal(gone.cashedOut, stackLeaving, 'accounted for in the settlement');
+  assert.notEqual(s.turn, stuck, 'play continues without them');
+  // Their blind is still in the pot, so the books only balance once it is won.
+  assert.equal(
+    settlement(s).reduce((n, r) => n + r.net, 0),
+    -totalPot(s),
+    'the shortfall is exactly the outstanding pot',
+  );
+
+  let guard = 0;
+  while (s.turn && guard++ < 30) {
+    s = reduce(s, { type: 'act', actor: s.turn, move: s.currentBet > 0 ? 'call' : 'check' });
+  }
+  if (s.awaitingPayout) {
+    s = reduce(s, {
+      type: 'award',
+      actor: HOST,
+      awards: s.pots.map((p, i) => ({ pot: i, winners: [p.eligible[0]] })),
+    });
+  }
+  assert.equal(settlement(s).reduce((n, r) => n + r.net, 0), 0, 'books balance once paid out');
+  // Chips on the table plus chips carried away must still be everything.
+  const cashedOut = s.players.reduce((n, p) => n + p.cashedOut, 0);
+  assert.equal(chipsInPlay(s) + cashedOut, 4000, 'no chips created or destroyed');
+});
+
+test('force-fold is host-only and refuses when there is no hand', () => {
+  let s = table(3);
+  assert.throws(() => reduce(s, { type: 'force-fold', actor: HOST, target: 'p1' }), /No hand/);
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  assert.throws(() => reduce(s, { type: 'force-fold', actor: 'p1', target: s.turn }), /Only the host/);
+});
+
 test('the button moves and skips players with no chips', () => {
   let s = table(3);
   s = reduce(s, { type: 'start-game', actor: HOST });

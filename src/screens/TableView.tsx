@@ -334,7 +334,7 @@ export function TableView({ game, me, onLeave, onJoinNeeded }: Props) {
           )}
         </div>
       ) : state.status === 'running' && state.street ? (
-        <ActionBar state={state} me={player} send={send} />
+        <ActionBar state={state} me={player} isHost={isHost} send={send} />
       ) : (
         <div className="px-3 pb-[calc(0.75rem+var(--sab))] pt-2">
           {isHost ? (
