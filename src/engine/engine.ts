@@ -11,6 +11,7 @@ import type {
   GameState,
   LogKind,
   Player,
+  PlayerStats,
   Pot,
   Street,
 } from './types.ts';
@@ -128,7 +129,11 @@ export function createGame(o: CreateOptions): GameState {
     lastAggressor: null,
     pots: [],
     awaitingPayout: false,
+    claims: {},
+    claimsDisputed: false,
     log: [],
+    stats: { handsPlayed: 0, biggestPot: 0, biggestPotWinner: null, players: {} },
+    undo: null,
     tourney:
       o.mode === 'tournament'
         ? {
@@ -202,11 +207,14 @@ function startHand(s: GameState, t: number) {
   if (ready.length < 2) fail('You need at least two players with chips.');
 
   s.handNo += 1;
+  s.stats.handsPlayed += 1;
   s.street = 'preflop';
   s.pot = 0;
   s.currentBet = 0;
   s.pots = [];
   s.awaitingPayout = false;
+  s.claims = {};
+  s.claimsDisputed = false;
   s.lastAggressor = null;
   s.minRaise = s.bb;
 
@@ -283,6 +291,7 @@ function progress(s: GameState, t: number) {
     const winner = contenders[0];
     const amount = s.pot;
     winner.stack += amount;
+    recordWin(s, winner, amount, false);
     log(s, 'win', `${winner.name} won ${fmt(amount)} (uncontested)`, t);
     endHand(s);
     return;
@@ -370,6 +379,8 @@ function endHand(s: GameState) {
   s.currentBet = 0;
   s.minRaise = s.bb;
   s.awaitingPayout = false;
+  s.claims = {};
+  s.claimsDisputed = false;
   s.lastAggressor = null;
   for (const p of s.players) {
     p.bet = 0;
@@ -450,6 +461,64 @@ function applyMove(s: GameState, p: Player, cmd: Command, t: number) {
   progress(s, t);
 }
 
+/* ------------------------------------------------------------------ */
+/* Stats — tallied as we go so a summary never needs a replay          */
+/* ------------------------------------------------------------------ */
+
+function statsFor(s: GameState, id: string): PlayerStats {
+  s.stats.players[id] ??= {
+    handsWon: 0,
+    chipsWon: 0,
+    biggestPot: 0,
+    potsUncontested: 0,
+    showdownsWon: 0,
+  };
+  return s.stats.players[id];
+}
+
+function recordWin(s: GameState, p: Player, amount: number, atShowdown: boolean) {
+  const st = statsFor(s, p.id);
+  st.handsWon += 1;
+  st.chipsWon += amount;
+  st.biggestPot = Math.max(st.biggestPot, amount);
+  if (atShowdown) st.showdownsWon += 1;
+  else st.potsUncontested += 1;
+  if (amount > s.stats.biggestPot) {
+    s.stats.biggestPot = amount;
+    s.stats.biggestPotWinner = p.name;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Showdown claims                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Work out each pot's winner from what the players themselves said. A pot is
+ * settled when only one eligible player is still claiming it — either because
+ * everyone else mucked, or because exactly one said they won. Anything less
+ * clear-cut is left for the host, who can see the actual cards.
+ */
+function resolveClaims(s: GameState): { pot: number; winners: string[] }[] | null {
+  if (!s.awaitingPayout || !s.pots.length) return null;
+
+  const contenders = live(s);
+  // Give everyone a chance to answer before deciding anything.
+  const allAnswered = contenders.every((p) => s.claims[p.id]);
+  const resolved: { pot: number; winners: string[] }[] = [];
+
+  for (let i = 0; i < s.pots.length; i++) {
+    const pot = s.pots[i];
+    const standing = pot.eligible.filter((id) => s.claims[id] !== 'muck');
+    const claiming = pot.eligible.filter((id) => s.claims[id] === 'win');
+
+    if (standing.length === 1) resolved.push({ pot: i, winners: standing });
+    else if (allAnswered && claiming.length === 1) resolved.push({ pot: i, winners: claiming });
+    else return null; // still waiting, or two people both say they won
+  }
+  return resolved;
+}
+
 /**
  * Fold a player who has walked away, then let the hand carry on. Their chips
  * stay in the pot, exactly as if they had folded themselves.
@@ -467,9 +536,8 @@ function foldAway(s: GameState, p: Player, t: number) {
 /* Payouts                                                             */
 /* ------------------------------------------------------------------ */
 
-function award(s: GameState, cmd: Command, t: number) {
+function award(s: GameState, assignments: { pot: number; winners: string[] }[], t: number) {
   if (!s.awaitingPayout) fail('There is no pot to award right now.');
-  const assignments = cmd.awards ?? [];
   if (!assignments.length) fail('Pick a winner first.');
 
   let paid = 0;
@@ -490,6 +558,7 @@ function award(s: GameState, cmd: Command, t: number) {
       }
       p.stack += amount;
       paid += amount;
+      recordWin(s, p, amount, true);
       log(s, 'win', `${p.name} won ${fmt(amount)} — ${pot.label}`, t);
     }
   }
@@ -520,10 +589,29 @@ function applyLevel(s: GameState, t: number) {
 /* Reducer                                                             */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Fill in anything a game saved by an older version of the app is missing.
+ * A hand in progress must survive a deploy — nobody should lose a pot because
+ * the server was updated between two bets.
+ */
+export function normalize(s: GameState): GameState {
+  s.claims ??= {};
+  s.claimsDisputed ??= false;
+  s.undo ??= null;
+  s.stats ??= { handsPlayed: 0, biggestPot: 0, biggestPotWinner: null, players: {} };
+  s.stats.players ??= {};
+  return s;
+}
+
 export function reduce(prev: GameState, cmd: Command): GameState {
-  const s = clone(prev);
+  const s = normalize(clone(prev));
   const t = cmd.now ?? Date.now();
   s.updatedAt = t;
+
+  // Remember where we were, so a misclick is one tap away from being undone.
+  // Only one step is kept, and the snapshot never carries its own history.
+  const snapshot = NEVER_UNDOABLE.has(cmd.type) ? null : clone(prev);
+  if (snapshot) snapshot.undo = null;
 
   const me = byId(s, cmd.actor);
   if (me) me.lastSeen = t;
@@ -611,9 +699,53 @@ export function reduce(prev: GameState, cmd: Command): GameState {
       break;
     }
 
+    case 'claim': {
+      // Players settle their own showdowns. The host only steps in on a tie.
+      const p = need(s, cmd.actor);
+      if (!s.awaitingPayout) fail('There is no pot to claim right now.');
+      if (!p.inHand || p.folded) fail('You were not in this hand.');
+      if (cmd.claim !== 'win' && cmd.claim !== 'muck') fail('Say win or muck.');
+
+      s.claims[p.id] = cmd.claim;
+      log(s, cmd.claim === 'win' ? 'win' : 'fold', `${p.name} ${cmd.claim === 'win' ? 'claimed the pot' : 'mucked'}`, t);
+
+      const resolved = resolveClaims(s);
+      if (resolved) {
+        s.claimsDisputed = false;
+        award(s, resolved, t);
+      } else {
+        // Two people both saying they won is the host's call, not ours.
+        const contenders = live(s);
+        const answered = contenders.every((x) => s.claims[x.id]);
+        s.claimsDisputed =
+          answered && contenders.filter((x) => s.claims[x.id] === 'win').length !== 1;
+      }
+      break;
+    }
+
     case 'award': {
       assertHost(s, cmd.actor);
-      award(s, cmd, t);
+      award(s, cmd.awards ?? [], t);
+      break;
+    }
+
+    case 'undo': {
+      assertHost(s, cmd.actor);
+      if (!s.undo) fail('There is nothing to undo.');
+      const restored = clone(s.undo);
+      restored.undo = null;
+      restored.updatedAt = t;
+      log(restored, 'host', 'Host undid the last action', t);
+      return restored;
+    }
+
+    case 'set-seats': {
+      assertHost(s, cmd.actor);
+      const seats = Math.min(10, Math.max(2, Math.round(cmd.seat ?? s.maxSeats)));
+      const highest = Math.max(...s.players.filter((p) => !p.leftTable).map((p) => p.seat), -1);
+      if (seats <= highest) fail('Move that player to a lower seat first.');
+      s.maxSeats = seats;
+      log(s, 'host', `Table set to ${seats} seats`, t);
       break;
     }
 
@@ -796,8 +928,20 @@ export function reduce(prev: GameState, cmd: Command): GameState {
       fail('Unknown action.');
   }
 
+  if (snapshot) s.undo = snapshot;
   return s;
 }
+
+/** Bookkeeping and identity changes are not what anyone means by "undo". */
+const NEVER_UNDOABLE = new Set<string>([
+  'heartbeat',
+  'level-tick',
+  'join',
+  'rename',
+  'sit',
+  'claim-host',
+  'undo',
+]);
 
 /* ------------------------------------------------------------------ */
 /* Derived helpers (UI + validation share these)                       */

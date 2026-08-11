@@ -7,6 +7,7 @@ import { ChipStack } from '../components/Chips.tsx';
 import { ActionBar } from '../components/ActionBar.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
 import { AwardSheet } from '../components/AwardSheet.tsx';
+import { ShowdownBar } from '../components/ShowdownBar.tsx';
 import { HostPanel } from '../components/HostPanel.tsx';
 import { TourneyClock } from '../components/TourneyClock.tsx';
 import { EndScreen } from '../components/EndScreen.tsx';
@@ -322,17 +323,13 @@ export function TableView({ game, me, onLeave, onJoinNeeded }: Props) {
       <ActivityFeed log={state.log} />
 
       {state.awaitingPayout ? (
-        <div className="px-3 pb-[calc(0.75rem+var(--sab))] pt-2">
-          {isHost ? (
-            <Button variant="gold" size="lg" full onClick={() => setAwardOpen(true)}>
-              AWARD POT — {fmt(pot)}
-            </Button>
-          ) : (
-            <div className="panel px-4 py-4 text-center text-sm font-bold text-[var(--color-muted)]">
-              Showdown — {host?.name ?? 'the host'} is awarding {fmt(pot)}
-            </div>
-          )}
-        </div>
+        <ShowdownBar
+          state={state}
+          me={player}
+          isHost={isHost}
+          send={send}
+          onDecide={() => setAwardOpen(true)}
+        />
       ) : state.status === 'running' && state.street ? (
         <ActionBar state={state} me={player} isHost={isHost} send={send} />
       ) : (

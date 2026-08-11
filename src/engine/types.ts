@@ -61,6 +61,26 @@ export interface Tourney {
   paused: boolean;
 }
 
+/** What a player said about the pot at showdown. */
+export type Claim = 'win' | 'muck';
+
+/** Tallied as hands play so an end-of-game summary needs no extra bookkeeping. */
+export interface PlayerStats {
+  handsWon: number;
+  chipsWon: number;
+  biggestPot: number;
+  /** Pots taken when everyone else folded — the bluffs, more or less. */
+  potsUncontested: number;
+  showdownsWon: number;
+}
+
+export interface GameStats {
+  handsPlayed: number;
+  biggestPot: number;
+  biggestPotWinner: string | null;
+  players: Record<string, PlayerStats>;
+}
+
 export interface GameState {
   code: string;
   mode: Mode;
@@ -86,8 +106,18 @@ export interface GameState {
   /** Resolved main/side pots, populated once a hand reaches showdown. */
   pots: Pot[];
   awaitingPayout: boolean;
+  /** Showdown answers, keyed by player id. Cleared with every new hand. */
+  claims: Record<string, Claim>;
+  /** Set when players disagree about who won, so the host steps in. */
+  claimsDisputed: boolean;
   log: LogEntry[];
   tourney: Tourney | null;
+  stats: GameStats;
+  /**
+   * The state as it was before the last meaningful action, so the host can
+   * step back from a misclick. Holds one step and never nests.
+   */
+  undo: GameState | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -100,7 +130,10 @@ export type ActionType =
   | 'start-game'
   | 'start-hand'
   | 'act'
+  | 'claim'
   | 'award'
+  | 'undo'
+  | 'set-seats'
   | 'reset-hand'
   | 'set-blinds'
   | 'set-stack'
@@ -132,6 +165,7 @@ export interface Command {
   ante?: number;
   /** Payout assignments: pot index -> winning player ids (split if >1). */
   awards?: { pot: number; winners: string[] }[];
+  claim?: Claim;
   sittingOut?: boolean;
   now?: number;
 }

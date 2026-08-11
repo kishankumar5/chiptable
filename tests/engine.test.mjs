@@ -235,6 +235,207 @@ test('reset-hand returns every chip to its owner', () => {
   assert.ok(s.players.every((p) => p.stack === 1000), 'everyone is whole again');
 });
 
+/** Play a 3-handed hand down to showdown with everyone still in. */
+function toShowdown(stack = 1000) {
+  let s = table(3, { stack });
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  let guard = 0;
+  while (s.turn && guard++ < 30) {
+    s = reduce(s, { type: 'act', actor: s.turn, move: s.currentBet > 0 ? 'call' : 'check' });
+  }
+  return s;
+}
+
+test('when everyone else mucks, the last player standing is paid automatically', () => {
+  let s = toShowdown();
+  assert.equal(s.awaitingPayout, true);
+  const [a, b, c] = s.pots[0].eligible;
+  const potSize = s.pot;
+  const stackBefore = stackOf(s, c);
+
+  s = reduce(s, { type: 'claim', actor: a, claim: 'muck' });
+  assert.equal(s.awaitingPayout, true, 'still waiting after one muck');
+  s = reduce(s, { type: 'claim', actor: b, claim: 'muck' });
+
+  // Only one eligible player left — no need to even ask them.
+  assert.equal(s.awaitingPayout, false, 'paid out without the host');
+  assert.equal(stackOf(s, c), stackBefore + potSize, 'winner was paid the whole pot');
+  assert.equal(chipsInPlay(s), 3000, 'chips conserved');
+  assert.equal(s.street, null, 'hand is over');
+});
+
+test('a single claim among mucks pays out without the host', () => {
+  let s = toShowdown();
+  const [a, b, c] = s.pots[0].eligible;
+  const potSize = s.pot;
+  const before = stackOf(s, b);
+
+  s = reduce(s, { type: 'claim', actor: a, claim: 'muck' });
+  s = reduce(s, { type: 'claim', actor: b, claim: 'win' });
+  s = reduce(s, { type: 'claim', actor: c, claim: 'muck' });
+
+  assert.equal(s.awaitingPayout, false);
+  assert.equal(stackOf(s, b), before + potSize, 'the claimant took the pot');
+  assert.equal(chipsInPlay(s), 3000);
+});
+
+test('two players claiming the same pot hands it to the host', () => {
+  let s = toShowdown();
+  const [a, b, c] = s.pots[0].eligible;
+
+  s = reduce(s, { type: 'claim', actor: a, claim: 'win' });
+  s = reduce(s, { type: 'claim', actor: b, claim: 'win' });
+  s = reduce(s, { type: 'claim', actor: c, claim: 'muck' });
+
+  assert.equal(s.awaitingPayout, true, 'nothing was paid');
+  assert.equal(s.claimsDisputed, true, 'the host is asked to decide');
+
+  // Host settles it the old way, including splitting it.
+  const potSize = s.pot;
+  s = reduce(s, { type: 'award', actor: HOST, awards: [{ pot: 0, winners: [a, b] }] });
+  assert.equal(s.awaitingPayout, false);
+  assert.equal(chipsInPlay(s), 3000);
+  assert.ok(potSize > 0);
+});
+
+test('claims are refused from players who were not in the hand', () => {
+  let s = toShowdown();
+  const folder = s.players.find((p) => !s.pots[0].eligible.includes(p.id));
+  assert.throws(
+    () => reduce(s, { type: 'claim', actor: 'nobody', claim: 'win' }),
+    /not seated/,
+  );
+  if (folder) {
+    assert.throws(() => reduce(s, { type: 'claim', actor: folder.id, claim: 'win' }), /not in this hand/);
+  }
+  assert.throws(() => reduce(s, { type: 'claim', actor: s.pots[0].eligible[0], claim: 'maybe' }), /win or muck/);
+});
+
+test('claims reset between hands', () => {
+  let s = toShowdown();
+  const [a, b] = s.pots[0].eligible;
+  s = reduce(s, { type: 'claim', actor: a, claim: 'muck' });
+  s = reduce(s, { type: 'claim', actor: b, claim: 'muck' });
+  s = reduce(s, { type: 'start-hand', actor: HOST });
+  assert.deepEqual(s.claims, {}, 'a fresh hand starts with no claims');
+  assert.equal(s.claimsDisputed, false);
+});
+
+test('undo steps back one action and restores the exact stacks', () => {
+  let s = table(3);
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  const before = s.players.map((p) => `${p.name}:${p.stack}`).join(' ');
+  const turnBefore = s.turn;
+
+  s = reduce(s, { type: 'act', actor: s.turn, move: 'raise', amount: 100 });
+  assert.notEqual(s.turn, turnBefore, 'the raise happened');
+
+  s = reduce(s, { type: 'undo', actor: HOST });
+  assert.equal(s.players.map((p) => `${p.name}:${p.stack}`).join(' '), before, 'stacks restored');
+  assert.equal(s.turn, turnBefore, 'it is their turn again');
+  assert.equal(chipsInPlay(s), 3000);
+});
+
+test('undo can take back a payout', () => {
+  let s = toShowdown();
+  const potSize = s.pot;
+  const winner = s.pots[0].eligible[0];
+  const stackBefore = stackOf(s, winner);
+
+  s = reduce(s, { type: 'award', actor: HOST, awards: [{ pot: 0, winners: [winner] }] });
+  assert.equal(stackOf(s, winner), stackBefore + potSize);
+
+  s = reduce(s, { type: 'undo', actor: HOST });
+  assert.equal(stackOf(s, winner), stackBefore, 'the pot went back');
+  assert.equal(s.awaitingPayout, true, 'we are back at the showdown');
+  assert.equal(s.pot, potSize);
+});
+
+test('undo only goes back one step, and only for the host', () => {
+  let s = table(3);
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  assert.throws(() => reduce(s, { type: 'undo', actor: 'p1' }), /Only the host/);
+  s = reduce(s, { type: 'undo', actor: HOST });
+  assert.throws(() => reduce(s, { type: 'undo', actor: HOST }), /nothing to undo/);
+});
+
+test('undo state never nests inside itself', () => {
+  let s = table(3);
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  s = reduce(s, { type: 'act', actor: s.turn, move: 'call' });
+  s = reduce(s, { type: 'act', actor: s.turn, move: 'call' });
+  assert.ok(s.undo, 'there is a snapshot');
+  assert.equal(s.undo.undo, null, 'and it carries no snapshot of its own');
+});
+
+test('the host can resize the table, but not below an occupied seat', () => {
+  let s = table(2, { stack: 100 });
+  s = reduce(s, { type: 'set-seats', actor: HOST, seat: 5 });
+  assert.equal(s.maxSeats, 5);
+
+  for (let i = 2; i < 5; i++) s = reduce(s, { type: 'join', actor: `x${i}`, name: `X${i}` });
+  assert.throws(() => reduce(s, { type: 'set-seats', actor: HOST, seat: 3 }), /lower seat/);
+  assert.throws(() => reduce(s, { type: 'set-seats', actor: 'x2', seat: 9 }), /Only the host/);
+
+  s = reduce(s, { type: 'set-seats', actor: HOST, seat: 9 });
+  assert.equal(s.maxSeats, 9, 'growing the table always works');
+});
+
+test('stats accumulate as hands are played', () => {
+  let s = table(3);
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  // Everyone folds to one player.
+  s = reduce(s, { type: 'act', actor: s.turn, move: 'fold' });
+  s = reduce(s, { type: 'act', actor: s.turn, move: 'fold' });
+
+  const winner = Object.entries(s.stats.players).find(([, v]) => v.handsWon === 1);
+  assert.ok(winner, 'a win was recorded');
+  assert.equal(winner[1].potsUncontested, 1, 'counted as taken without a showdown');
+  assert.equal(winner[1].showdownsWon, 0);
+  assert.equal(s.stats.handsPlayed, 1);
+  assert.equal(s.stats.biggestPot, 15);
+  assert.ok(s.stats.biggestPotWinner, 'the biggest pot has a name on it');
+});
+
+test('showdown wins are recorded separately from uncontested ones', () => {
+  let s = toShowdown();
+  const winner = s.pots[0].eligible[0];
+  s = reduce(s, { type: 'award', actor: HOST, awards: [{ pot: 0, winners: [winner] }] });
+  assert.equal(s.stats.players[winner].showdownsWon, 1);
+  assert.equal(s.stats.players[winner].potsUncontested, 0);
+  assert.equal(s.stats.players[winner].chipsWon, 30);
+});
+
+test('a hand saved by an older version keeps playing after an update', () => {
+  let s = table(3);
+  s = reduce(s, { type: 'start-game', actor: HOST });
+
+  // Exactly what a row written before claims/stats/undo existed looks like.
+  const legacy = JSON.parse(JSON.stringify(s));
+  delete legacy.claims;
+  delete legacy.claimsDisputed;
+  delete legacy.stats;
+  delete legacy.undo;
+
+  let next = reduce(legacy, { type: 'act', actor: legacy.turn, move: 'call' });
+  assert.ok(next.turn, 'the hand carried on');
+  assert.deepEqual(next.claims, {});
+  assert.equal(next.stats.handsPlayed, 0, 'stats start from now, not from nothing');
+  assert.equal(chipsInPlay(next), 3000);
+
+  // And it can still reach a showdown and pay out.
+  let guard = 0;
+  while (next.turn && guard++ < 30) {
+    next = reduce(next, { type: 'act', actor: next.turn, move: next.currentBet > 0 ? 'call' : 'check' });
+  }
+  next = reduce(next, {
+    type: 'award',
+    actor: HOST,
+    awards: next.pots.map((p, i) => ({ pot: i, winners: [p.eligible[0]] })),
+  });
+  assert.equal(chipsInPlay(next), 3000);
+});
+
 test('the host can fold for a player who walked away mid-hand', () => {
   let s = table(4);
   s = reduce(s, { type: 'start-game', actor: HOST });

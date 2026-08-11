@@ -127,6 +127,15 @@ export function HostPanel({ state, me, isHost, hostGone, open, onClose, send }: 
                 <Button variant="dark" onClick={() => void send({ type: 'reset-hand' })}>
                   Reset hand
                 </Button>
+                {/* The way back from a misclick — one step, no questions. */}
+                <Button
+                  variant="dark"
+                  className="col-span-2"
+                  disabled={!state.undo}
+                  onClick={() => void send({ type: 'undo' })}
+                >
+                  ↩︎ Undo last action
+                </Button>
                 {state.tourney && (
                   <Button variant="dark" onClick={() => void send({ type: 'toggle-pause' })}>
                     {state.tourney.paused ? 'Resume clock' : 'Pause clock'}
@@ -165,6 +174,42 @@ export function HostPanel({ state, me, isHost, hostGone, open, onClose, send }: 
                   Set
                 </Button>
               </div>
+            </section>
+
+            {/* --- Table size ----------------------------------------- */}
+            <section>
+              <h3 className="mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[var(--color-muted)]">
+                Seats
+              </h3>
+              <div className="flex items-center gap-3">
+                <Button
+                  size="lg"
+                  variant="dark"
+                  disabled={state.maxSeats <= 2}
+                  onClick={() => void send({ type: 'set-seats', seat: state.maxSeats - 1 })}
+                  aria-label="One fewer seat"
+                >
+                  −
+                </Button>
+                <div className="flex-1 rounded-2xl border border-white/10 bg-black/30 py-2 text-center">
+                  <span className="text-2xl font-black text-[var(--color-gold)]">
+                    {state.maxSeats}
+                  </span>
+                  <span className="ml-2 text-[11px] text-[var(--color-muted)]">seats</span>
+                </div>
+                <Button
+                  size="lg"
+                  variant="dark"
+                  disabled={state.maxSeats >= 10}
+                  onClick={() => void send({ type: 'set-seats', seat: state.maxSeats + 1 })}
+                  aria-label="One more seat"
+                >
+                  +
+                </Button>
+              </div>
+              <p className="mt-1 text-[11px] text-[var(--color-muted)]">
+                Add a seat if another friend turns up mid-game.
+              </p>
             </section>
 
             {/* --- Players -------------------------------------------- */}
