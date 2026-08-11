@@ -112,9 +112,12 @@ function Misconfigured() {
         Almost there — this build has no Supabase project attached yet.
       </p>
       <pre className="w-full rounded-2xl bg-black/40 p-3 text-left text-[11px] text-white/60">
-        cp .env.example .env{'\n'}# then add VITE_SUPABASE_URL{'\n'}# and VITE_SUPABASE_ANON_KEY
+        VITE_SUPABASE_URL{'\n'}VITE_SUPABASE_ANON_KEY
       </pre>
-      <p className="text-xs text-white/35">See the README for the full setup.</p>
+      <p className="text-xs text-white/35">
+        Set both in <code>.env</code> when running locally, or as repository secrets when
+        deploying. Full setup is in the README.
+      </p>
     </div>
   );
 }
