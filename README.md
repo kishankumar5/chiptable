@@ -182,6 +182,16 @@ frontend host:
 supabase functions deploy game
 ```
 
+**Without installing the CLI:** in the dashboard go to **Edge Functions → Deploy
+a new function**, name it exactly `game`, and paste the contents of
+[`supabase/functions/game/bundled.ts`](supabase/functions/game/bundled.ts) —
+a generated single-file copy of the function and the engine it imports.
+Regenerate it after changing the engine with:
+
+```bash
+npm run bundle:function
+```
+
 ---
 
 ## How it works
