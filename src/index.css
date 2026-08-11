@@ -1,0 +1,185 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-felt-900: #052e20;
+  --color-felt-800: #073b29;
+  --color-felt: #0d4a34;
+  --color-felt-light: #14664a;
+  --color-panel: #17191d;
+  --color-panel-2: #21242a;
+  --color-panel-3: #2c3038;
+  --color-gold: #f5c542;
+  --color-gold-dim: #b8912c;
+  --color-ink: #f4f6f5;
+  --color-muted: #9aa4a0;
+
+  --font-sans: 'Inter var', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --radius-xl2: 1.75rem;
+
+  --animate-pop: pop 180ms cubic-bezier(0.2, 0.9, 0.3, 1.4);
+  --animate-rise: rise 240ms ease-out;
+  --animate-fade: fade 200ms ease-out;
+  --animate-pulse-turn: pulseTurn 1.6s ease-in-out infinite;
+  --animate-shimmer: shimmer 2.4s linear infinite;
+  --animate-banner: banner 2.6s ease-out forwards;
+}
+
+@keyframes pop {
+  from {
+    transform: scale(0.82);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes rise {
+  from {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes pulseTurn {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(245 197 66 / 0.55), 0 6px 18px rgb(0 0 0 / 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgb(245 197 66 / 0), 0 6px 18px rgb(0 0 0 / 0.45);
+  }
+}
+@keyframes shimmer {
+  from {
+    background-position: -220% 0;
+  }
+  to {
+    background-position: 220% 0;
+  }
+}
+@keyframes banner {
+  0% {
+    transform: translateY(-16px) scale(0.96);
+    opacity: 0;
+  }
+  12% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-10px);
+    opacity: 0;
+  }
+}
+
+/* Chips flying to the pot and back out again. The distance is handed in as
+   CSS variables so one keyframe covers every seat at the table. */
+@keyframes flyToPot {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: translate3d(var(--dx), var(--dy), 0) scale(0.7);
+    opacity: 0;
+  }
+}
+@keyframes flyFromPot {
+  from {
+    transform: translate3d(var(--dx), var(--dy), 0) scale(0.7);
+    opacity: 0.2;
+  }
+  to {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 1;
+  }
+}
+
+:root {
+  color-scheme: dark;
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  background:
+    radial-gradient(120% 80% at 50% 0%, #10583d 0%, #0a3527 40%, transparent 70%),
+    linear-gradient(180deg, #07281c 0%, #04170f 100%);
+  background-color: #04170f;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Buttons must feel instant: respond on press, not on release. */
+.btn {
+  @apply select-none touch-manipulation rounded-2xl font-extrabold tracking-wide transition-transform duration-100 active:scale-[0.96];
+}
+
+.panel {
+  @apply rounded-3xl border border-white/10 bg-[var(--color-panel)]/90 shadow-[0_10px_40px_rgb(0_0_0/0.45)] backdrop-blur;
+}
+
+.felt {
+  background:
+    radial-gradient(circle at 50% 42%, #17724f 0%, #0e5238 45%, #093a28 100%),
+    #0b3d2c;
+}
+
+.gold-text {
+  background: linear-gradient(100deg, #ffe89a 0%, #f5c542 35%, #d19c1c 60%, #ffe89a 100%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: var(--animate-shimmer);
+}
+
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input,
+button {
+  font-family: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
