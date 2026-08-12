@@ -114,6 +114,7 @@ export function createGame(o: CreateOptions): GameState {
     status: 'lobby',
     hostId: o.hostId,
     maxSeats,
+    locked: false,
     sb: o.sb,
     bb: o.bb,
     ante: o.ante ?? 0,
@@ -595,6 +596,7 @@ function applyLevel(s: GameState, t: number) {
  * the server was updated between two bets.
  */
 export function normalize(s: GameState): GameState {
+  s.locked ??= false;
   s.claims ??= {};
   s.claimsDisputed ??= false;
   s.undo ??= null;
@@ -626,11 +628,13 @@ export function reduce(prev: GameState, cmd: Command): GameState {
       if (!name) fail('Pick a nickname.');
       const existing = byId(s, cmd.actor);
       if (existing) {
-        // Reconnect: same device id gets its seat and stack back.
+        // Reconnect: same device id gets its seat and stack back. A locked
+        // table never shuts out someone who already has a seat.
         existing.leftTable = false;
         existing.name = name.slice(0, 14);
         break;
       }
+      if (s.locked) fail('This table is locked. Ask the host to let you in.');
       const taken = new Set(s.players.filter((p) => !p.leftTable).map((p) => p.seat));
       let seat = cmd.seat;
       if (seat === undefined || taken.has(seat)) {
@@ -675,6 +679,9 @@ export function reduce(prev: GameState, cmd: Command): GameState {
       assertHost(s, cmd.actor);
       if (s.status === 'running') break;
       s.status = 'running';
+      // Once cards are in the air, a stranger guessing the code shouldn't be
+      // able to sit down. The host can reopen it from the settings sheet.
+      s.locked = true;
       if (s.tourney) {
         s.tourney.paused = false;
         applyLevel(s, t);
@@ -737,6 +744,13 @@ export function reduce(prev: GameState, cmd: Command): GameState {
       restored.updatedAt = t;
       log(restored, 'host', 'Host undid the last action', t);
       return restored;
+    }
+
+    case 'set-lock': {
+      assertHost(s, cmd.actor);
+      s.locked = !!cmd.locked;
+      log(s, 'host', s.locked ? 'Table locked' : 'Table open to new players', t);
+      break;
     }
 
     case 'set-seats': {

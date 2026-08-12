@@ -57,6 +57,7 @@ function createGame(o) {
     status: "lobby",
     hostId: o.hostId,
     maxSeats,
+    locked: false,
     sb: o.sb,
     bb: o.bb,
     ante: o.ante ?? 0,
@@ -423,6 +424,7 @@ function applyLevel(s, t) {
   tr.endsAt = tr.paused ? null : t + level.duration * 1e3;
 }
 function normalize(s) {
+  s.locked ??= false;
   s.claims ??= {};
   s.claimsDisputed ??= false;
   s.undo ??= null;
@@ -451,6 +453,7 @@ function reduce(prev, cmd) {
         existing.name = name.slice(0, 14);
         break;
       }
+      if (s.locked) fail("This table is locked. Ask the host to let you in.");
       const taken = new Set(s.players.filter((p2) => !p2.leftTable).map((p2) => p2.seat));
       let seat = cmd.seat;
       if (seat === void 0 || taken.has(seat)) {
@@ -491,6 +494,7 @@ function reduce(prev, cmd) {
       assertHost(s, cmd.actor);
       if (s.status === "running") break;
       s.status = "running";
+      s.locked = true;
       if (s.tourney) {
         s.tourney.paused = false;
         applyLevel(s, t);
@@ -543,6 +547,12 @@ function reduce(prev, cmd) {
       restored.updatedAt = t;
       log(restored, "host", "Host undid the last action", t);
       return restored;
+    }
+    case "set-lock": {
+      assertHost(s, cmd.actor);
+      s.locked = !!cmd.locked;
+      log(s, "host", s.locked ? "Table locked" : "Table open to new players", t);
+      break;
     }
     case "set-seats": {
       assertHost(s, cmd.actor);
@@ -745,6 +755,30 @@ var json = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { ...CORS, "Content-Type": "application/json" }
 });
+async function publish(code, state, version) {
+  try {
+    await fetch(`${SUPABASE_URL}/realtime/v1/api/broadcast`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        messages: [{ topic: `game:${code}`, event: "state", payload: { state, version } }]
+      })
+    });
+  } catch {
+  }
+}
+var CREATE_LIMIT = 12;
+var CREATE_WINDOW_MS = 60 * 60 * 1e3;
+var recentCreates = /* @__PURE__ */ new Map();
+function mayCreate(ip) {
+  const now = Date.now();
+  const hits = (recentCreates.get(ip) ?? []).filter((t) => now - t < CREATE_WINDOW_MS);
+  hits.push(now);
+  recentCreates.set(ip, hits);
+  if (recentCreates.size > 5e3) recentCreates.clear();
+  return hits.length <= CREATE_LIMIT;
+}
+var clientIp = (req) => (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
 async function readGame(code) {
   const res = await fetch(`${REST}?code=eq.${encodeURIComponent(code)}&select=code,state,version`, {
     headers: headers()
@@ -770,13 +804,16 @@ async function writeGame(code, version, state) {
   const rows = await res.json();
   return rows.length > 0;
 }
-async function handleCreate(body) {
+async function handleCreate(body, ip) {
   const mode = body.mode === "tournament" ? "tournament" : "cash";
   const hostId = String(body.hostId ?? "");
   const hostName = String(body.hostName ?? "").trim();
   if (!hostId || !hostName) return json({ error: "Pick a nickname to get started." }, 400);
+  if (!mayCreate(ip)) {
+    return json({ error: "That's a lot of tables. Take a breath and try again shortly." }, 429);
+  }
   for (let attempt = 0; attempt < 6; attempt++) {
-    const code = makeRoomCode(4);
+    const code = makeRoomCode(6);
     let state;
     try {
       state = createGame({
@@ -803,6 +840,7 @@ async function handleCreate(body) {
     if (res.status === 409) continue;
     if (!res.ok) return json({ error: "Could not create that game." }, 500);
     const rows = await res.json();
+    await publish(code, rows[0].state, rows[0].version);
     return json({ code, state: rows[0].state, version: rows[0].version });
   }
   return json({ error: "Could not create that game. Try again." }, 500);
@@ -822,6 +860,7 @@ async function handleCommand(body) {
       throw e;
     }
     if (await writeGame(code, row.version, next)) {
+      await publish(code, next, row.version + 1);
       return json({ state: next, version: row.version + 1 });
     }
   }
@@ -829,6 +868,7 @@ async function handleCommand(body) {
 }
 async function handleFetch(body) {
   const code = String(body.code ?? "").toUpperCase();
+  if (!/^[A-Z0-9]{4,8}$/.test(code)) return json({ error: "That room code doesn't exist." }, 404);
   const row = await readGame(code);
   if (!row) return json({ error: "That room code doesn't exist." }, 404);
   return json({ state: row.state, version: row.version });
@@ -837,10 +877,12 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "Not found." }, 404);
   try {
-    const body = await req.json();
+    const raw = await req.text();
+    if (raw.length > 2e4) return json({ error: "That request was too large." }, 413);
+    const body = JSON.parse(raw);
     switch (body.op) {
       case "create":
-        return await handleCreate(body);
+        return await handleCreate(body, clientIp(req));
       case "command":
         return await handleCommand(body);
       case "fetch":

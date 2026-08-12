@@ -87,6 +87,8 @@ export interface GameState {
   status: Status;
   hostId: string;
   maxSeats: number;
+  /** When true, only players who already have a seat can get in. */
+  locked: boolean;
   sb: number;
   bb: number;
   ante: number;
@@ -134,6 +136,7 @@ export type ActionType =
   | 'award'
   | 'undo'
   | 'set-seats'
+  | 'set-lock'
   | 'reset-hand'
   | 'set-blinds'
   | 'set-stack'
@@ -167,5 +170,6 @@ export interface Command {
   awards?: { pot: number; winners: string[] }[];
   claim?: Claim;
   sittingOut?: boolean;
+  locked?: boolean;
   now?: number;
 }

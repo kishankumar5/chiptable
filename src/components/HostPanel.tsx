@@ -210,6 +210,15 @@ export function HostPanel({ state, me, isHost, hostGone, open, onClose, send }: 
               <p className="mt-1 text-[11px] text-[var(--color-muted)]">
                 Add a seat if another friend turns up mid-game.
               </p>
+              {/* Locked by default once play starts, so nobody wanders in. */}
+              <Button
+                variant={state.locked ? 'gold' : 'dark'}
+                full
+                className="mt-2"
+                onClick={() => void send({ type: 'set-lock', locked: !state.locked })}
+              >
+                {state.locked ? '🔒 Table locked — tap to open' : '🔓 Anyone with the code can join'}
+              </Button>
             </section>
 
             {/* --- Players -------------------------------------------- */}

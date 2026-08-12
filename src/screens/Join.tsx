@@ -72,12 +72,12 @@ export function Join({
         <div className="space-y-5">
           <Field label="Room code">
             <input
-              className={`${inputClass} text-center text-3xl tracking-[0.4em]`}
+              className={`${inputClass} text-center text-3xl tracking-[0.25em]`}
               value={code}
-              maxLength={4}
+              maxLength={8}
               autoFocus
               autoCapitalize="characters"
-              placeholder="K7PX"
+              placeholder="K7PXQ2"
               onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
             />
           </Field>

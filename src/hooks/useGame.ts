@@ -10,8 +10,12 @@ export type Connection = 'connecting' | 'live' | 'dropped' | 'missing';
 
 /** How long to let a dropped socket try to recover before alarming anyone. */
 const GRACE_MS = 4000;
-/** How long without any contact before we quietly check the connection. */
-const STALE_MS = 20_000;
+/**
+ * How long without any contact before we quietly check in. This doubles as the
+ * safety net if a pushed update is ever missed: worst case the table is a few
+ * seconds stale, never wrong.
+ */
+const STALE_MS = 12_000;
 
 /** Commands the app sends on its own. Their failures stay out of the player's way. */
 const BACKGROUND_COMMANDS = new Set(['heartbeat', 'level-tick']);
@@ -77,7 +81,15 @@ export function useGame(code: string): Game {
     void load();
 
     const channel = supabase
-      .channel(`game:${code}`, { config: { broadcast: { self: false } } })
+      .channel(`game:${code}`, { config: { broadcast: { self: true } } })
+      // The server pushes state here. This is the path that works without the
+      // public key having any read access to the games table.
+      .on('broadcast', { event: 'state' }, (msg) => {
+        const row = msg.payload as { state?: GameState; version?: number };
+        if (row?.state && typeof row.version === 'number') apply(row.state, row.version);
+      })
+      // Legacy path, kept so a client and server mid-upgrade still agree. Goes
+      // quiet by itself once read access to the table is revoked.
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'games', filter: `code=eq.${code}` },

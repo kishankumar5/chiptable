@@ -196,9 +196,24 @@ npm run bundle:function
 
 ## How it works
 
+### Knowing the room code is the only way in
+
+After the `0002_lockdown` migration the `games` table is not readable by anyone
+but the server. Clients never query it — they ask the Edge Function for a
+specific room code, and the function pushes every update to a realtime channel
+named after that code. Nothing is listable, so a stranger cannot enumerate
+tables or read anyone's nicknames and stacks.
+
+Tables also lock themselves the moment a game starts, so a guessed code cannot
+put someone in a seat mid-game. The host can reopen the table from ⚙️.
+
+**Run the two backend steps in order:** deploy the broadcasting function first,
+*then* apply `0002_lockdown.sql`. Reversing them leaves clients unable to see
+updates until the function catches up.
+
 ### The server is authoritative
 
-Clients never write to the database. RLS grants the `anon` key `select` only.
+Clients never write to the database. RLS grants the `anon` key nothing at all.
 Every action — join, bet, fold, award, rebuy, host controls — is a command
 posted to the `game` Edge Function, which:
 

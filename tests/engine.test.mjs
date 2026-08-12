@@ -406,6 +406,34 @@ test('showdown wins are recorded separately from uncontested ones', () => {
   assert.equal(s.stats.players[winner].chipsWon, 30);
 });
 
+test('starting the game locks the table to newcomers', () => {
+  let s = table(3);
+  s = reduce(s, { type: 'join', actor: 'early', name: 'Early' });
+  assert.equal(s.locked, false, 'a lobby is open');
+
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  assert.equal(s.locked, true, 'locked once cards are in the air');
+  assert.throws(() => reduce(s, { type: 'join', actor: 'stranger', name: 'Nosey' }), /locked/);
+
+  // Someone who already has a seat always gets back in.
+  const back = reduce(s, { type: 'join', actor: 'p1', name: 'P1' });
+  assert.equal(back.players.find((p) => p.id === 'p1').leftTable, false);
+
+  s = reduce(s, { type: 'set-lock', actor: HOST, locked: false });
+  s = reduce(s, { type: 'join', actor: 'friend', name: 'Late' });
+  assert.ok(s.players.some((p) => p.id === 'friend'), 'the host can let people in again');
+  assert.throws(() => reduce(s, { type: 'set-lock', actor: 'p1', locked: true }), /Only the host/);
+});
+
+test('a game saved before locking existed is treated as open', () => {
+  let s = table(2);
+  const legacy = JSON.parse(JSON.stringify(s));
+  delete legacy.locked;
+  const next = reduce(legacy, { type: 'join', actor: 'newcomer', name: 'New' });
+  assert.equal(next.locked, false);
+  assert.ok(next.players.some((p) => p.id === 'newcomer'));
+});
+
 test('a hand saved by an older version keeps playing after an update', () => {
   let s = table(3);
   s = reduce(s, { type: 'start-game', actor: HOST });

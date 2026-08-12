@@ -43,6 +43,57 @@ interface Row {
   version: number;
 }
 
+/* ------------------------------------------------------------------ */
+/* Pushing state to the table                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Push the new state to everyone sitting at this table.
+ *
+ * Players used to watch the database row directly, which meant the public key
+ * needed read access to every game. Now the server pushes to a channel named
+ * after the room code, so nothing is readable without knowing that code.
+ * A failure here is not fatal — clients re-fetch on their own.
+ */
+async function publish(code: string, state: GameState, version: number) {
+  try {
+    await fetch(`${SUPABASE_URL}/realtime/v1/api/broadcast`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({
+        messages: [{ topic: `game:${code}`, event: 'state', payload: { state, version } }],
+      }),
+    });
+  } catch {
+    /* the watchdog on each client will notice and catch up */
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Abuse limits                                                        */
+/* ------------------------------------------------------------------ */
+
+const CREATE_LIMIT = 12;
+const CREATE_WINDOW_MS = 60 * 60 * 1000;
+const recentCreates = new Map<string, number[]>();
+
+/**
+ * Crude per-address throttle on making new tables. It lives in memory, so it
+ * resets when the function goes cold — enough to stop a loop filling the
+ * database, not a defence against a determined attacker.
+ */
+function mayCreate(ip: string): boolean {
+  const now = Date.now();
+  const hits = (recentCreates.get(ip) ?? []).filter((t) => now - t < CREATE_WINDOW_MS);
+  hits.push(now);
+  recentCreates.set(ip, hits);
+  if (recentCreates.size > 5000) recentCreates.clear(); // keep memory bounded
+  return hits.length <= CREATE_LIMIT;
+}
+
+const clientIp = (req: Request) =>
+  (req.headers.get('x-forwarded-for') ?? '').split(',')[0].trim() || 'unknown';
+
 async function readGame(code: string): Promise<Row | null> {
   const res = await fetch(`${REST}?code=eq.${encodeURIComponent(code)}&select=code,state,version`, {
     headers: headers(),
@@ -71,15 +122,20 @@ async function writeGame(code: string, version: number, state: GameState): Promi
   return rows.length > 0;
 }
 
-async function handleCreate(body: Record<string, unknown>) {
+async function handleCreate(body: Record<string, unknown>, ip: string) {
   const mode = body.mode === 'tournament' ? 'tournament' : 'cash';
   const hostId = String(body.hostId ?? '');
   const hostName = String(body.hostName ?? '').trim();
   if (!hostId || !hostName) return json({ error: 'Pick a nickname to get started.' }, 400);
+  if (!mayCreate(ip)) {
+    return json({ error: "That's a lot of tables. Take a breath and try again shortly." }, 429);
+  }
 
   // Retry on the (unlikely) chance of a room-code collision.
   for (let attempt = 0; attempt < 6; attempt++) {
-    const code = makeRoomCode(4);
+    // Six characters: short enough to read aloud, long enough that nobody is
+    // going to stumble into your game by guessing.
+    const code = makeRoomCode(6);
     let state: GameState;
     try {
       state = createGame({
@@ -107,6 +163,7 @@ async function handleCreate(body: Record<string, unknown>) {
     if (res.status === 409) continue; // code already taken
     if (!res.ok) return json({ error: 'Could not create that game.' }, 500);
     const rows = (await res.json()) as Row[];
+    await publish(code, rows[0].state, rows[0].version);
     return json({ code, state: rows[0].state, version: rows[0].version });
   }
   return json({ error: 'Could not create that game. Try again.' }, 500);
@@ -131,6 +188,7 @@ async function handleCommand(body: Record<string, unknown>) {
     }
 
     if (await writeGame(code, row.version, next)) {
+      await publish(code, next, row.version + 1);
       return json({ state: next, version: row.version + 1 });
     }
     // Lost the race — re-read and replay against the newer state.
@@ -140,6 +198,8 @@ async function handleCommand(body: Record<string, unknown>) {
 
 async function handleFetch(body: Record<string, unknown>) {
   const code = String(body.code ?? '').toUpperCase();
+  // Knowing the room code is what grants access — nothing is listable.
+  if (!/^[A-Z0-9]{4,8}$/.test(code)) return json({ error: "That room code doesn't exist." }, 404);
   const row = await readGame(code);
   if (!row) return json({ error: "That room code doesn't exist." }, 404);
   return json({ state: row.state, version: row.version });
@@ -150,10 +210,14 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Not found.' }, 404);
 
   try {
-    const body = (await req.json()) as Record<string, unknown>;
+    // A game state is a few kilobytes; anything larger is not a real request.
+    const raw = await req.text();
+    if (raw.length > 20_000) return json({ error: 'That request was too large.' }, 413);
+    const body = JSON.parse(raw) as Record<string, unknown>;
+
     switch (body.op) {
       case 'create':
-        return await handleCreate(body);
+        return await handleCreate(body, clientIp(req));
       case 'command':
         return await handleCommand(body);
       case 'fetch':

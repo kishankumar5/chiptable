@@ -35,9 +35,34 @@ export function Landing({ onCreate, onJoin }: { onCreate: () => void; onJoin: ()
         </Button>
       </div>
 
-      <p className="mt-8 max-w-[16rem] text-center text-xs leading-relaxed text-white/35">
-        Deal your own cards. ChipTable keeps every stack, bet and pot honest.
-      </p>
+      {/* A stranger arriving from a shared link needs to understand this in
+          about four seconds, without scrolling. */}
+      <div className="mt-9 w-full max-w-xs">
+        <p className="mb-4 text-center text-[13px] leading-relaxed text-white/55">
+          You deal real cards. ChipTable handles the chips.
+        </p>
+        <ol className="space-y-2">
+          {[
+            ['1', 'Start a table', 'Pick your stack and blinds. No signup.'],
+            ['2', 'Share the code', 'Friends join from their own phones.'],
+            ['3', 'Play', 'Bets, pots and payouts stay in sync.'],
+          ].map(([n, title, detail]) => (
+            <li key={n} className="flex items-start gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5">
+              <span className="mt-px grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[var(--color-gold)] text-[11px] font-black text-[#3b2a00]">
+                {n}
+              </span>
+              <span className="leading-tight">
+                <span className="block text-[13px] font-bold text-ink">{title}</span>
+                <span className="block text-[11px] text-white/45">{detail}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+        <p className="mt-5 text-center text-[10px] leading-relaxed text-white/25">
+          ChipTable tracks chips only. It never handles real money, and it does not
+          deal cards or decide who wins.
+        </p>
+      </div>
     </div>
   );
 }

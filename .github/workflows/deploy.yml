@@ -33,6 +33,9 @@ jobs:
         env:
           # Pages serves the site from /<repo>/, so the bundle is built for it.
           VITE_BASE: /${{ github.event.repository.name }}/
+          # Absolute URL for link previews. Set a SITE_URL repository variable
+          # when you move to a custom domain and the preview card follows.
+          VITE_SITE_URL: ${{ vars.SITE_URL || format('https://{0}.github.io/{1}', github.repository_owner, github.event.repository.name) }}
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: npm run build:pages

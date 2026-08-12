@@ -9,8 +9,33 @@
     <meta name="theme-color" content="#0b2b1f" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="description" content="ChipTable — your cards, our chips. A virtual poker chip manager for playing with real cards." />
-    <title>ChipTable ♠</title>
+    <meta
+      name="description"
+      content="Virtual poker chips for playing with a real deck. Stacks, blinds, pots and side pots, live on everyone's phone. No signup."
+    />
+    <title>ChipTable ♠ — Your cards. Our chips.</title>
+
+    <!-- Shared links are how this app travels, so they get a real preview card.
+         VITE_SITE_URL is substituted at build time — point it at a custom
+         domain and the whole card follows. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="ChipTable" />
+    <meta property="og:title" content="ChipTable ♠ — Your cards. Our chips." />
+    <meta
+      property="og:description"
+      content="Deal your own cards. ChipTable handles the chips — stacks, blinds, pots and payouts, live on everyone's phone. No signup, no download."
+    />
+    <meta property="og:url" content="%VITE_SITE_URL%/" />
+    <meta property="og:image" content="%VITE_SITE_URL%/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ChipTable ♠ — Your cards. Our chips." />
+    <meta
+      name="twitter:description"
+      content="Virtual poker chips for playing with a real deck. No signup, no download."
+    />
+    <meta name="twitter:image" content="%VITE_SITE_URL%/og-image.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <link rel="manifest" href="./manifest.webmanifest" />
