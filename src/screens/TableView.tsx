@@ -8,6 +8,9 @@ import { ActionBar } from '../components/ActionBar.tsx';
 import { ActivityFeed } from '../components/ActivityFeed.tsx';
 import { AwardSheet } from '../components/AwardSheet.tsx';
 import { ShowdownBar } from '../components/ShowdownBar.tsx';
+import { MoneySheet } from '../components/MoneySheet.tsx';
+import { HandRanks } from '../components/HandRanks.tsx';
+import { recordGame } from '../lib/ledger.ts';
 import { HostPanel } from '../components/HostPanel.tsx';
 import { TourneyClock } from '../components/TourneyClock.tsx';
 import { EndScreen } from '../components/EndScreen.tsx';
@@ -75,6 +78,8 @@ export function TableView({ game, me, onLeave, onJoinNeeded }: Props) {
   const { state, connection, error, clearError, send, reconnect } = game;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [awardOpen, setAwardOpen] = useState(false);
+  const [moneyOpen, setMoneyOpen] = useState(false);
+  const [ranksOpen, setRanksOpen] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const { fly, layer } = useFlights();
 
@@ -84,6 +89,17 @@ export function TableView({ game, me, onLeave, onJoinNeeded }: Props) {
 
   const player = state?.players.find((p) => p.id === me) ?? null;
   const isHost = state?.hostId === me;
+
+  /* --- Private spend record, kept on this device only --------------- */
+  useEffect(() => {
+    if (!state || !player) return;
+    recordGame({
+      code: state.code,
+      mode: state.mode,
+      buyIn: player.buyIn,
+      net: player.stack + player.cashedOut - player.buyIn,
+    });
+  }, [state, player]);
 
   /* --- Reactions to state changes --------------------------------- */
   useEffect(() => {
@@ -214,6 +230,7 @@ export function TableView({ game, me, onLeave, onJoinNeeded }: Props) {
 
   const host = state.players.find((p) => p.id === state.hostId);
   const hostGone = !host || host.leftTable || Date.now() - host.lastSeen > 45_000;
+  const myNet = player.stack + player.cashedOut - player.buyIn;
   const pot = totalPot(state);
   const seatsAtTable = state.players.filter((p) => !p.leftTable);
   const rotate = (seat: number) => (seat - player.seat + state.maxSeats) % state.maxSeats;
@@ -243,11 +260,30 @@ export function TableView({ game, me, onLeave, onJoinNeeded }: Props) {
         {state.tourney ? (
           <TourneyClock state={state} isHost={isHost} send={send} />
         ) : (
-          <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-1.5 text-[11px] font-black">
-            <span className="text-[var(--color-muted)]">BLINDS </span>
-            {fmt(state.sb)} / {fmt(state.bb)}
+          <div className="rounded-2xl border border-white/10 bg-black/40 px-2.5 py-1.5 text-[11px] font-black">
+            {fmt(state.sb)}/{fmt(state.bb)}
           </div>
         )}
+
+        {/* What this table has cost you so far — one tap for the full picture. */}
+        <button
+          onClick={() => setMoneyOpen(true)}
+          aria-label="Your money"
+          className={`btn rounded-2xl border border-white/10 bg-black/40 px-2.5 py-1.5 text-[11px] font-black tabular-nums ${
+            myNet > 0 ? 'text-emerald-400' : myNet < 0 ? 'text-red-400' : 'text-[var(--color-muted)]'
+          }`}
+        >
+          {myNet > 0 ? '+' : myNet < 0 ? '−' : ''}
+          {fmt(Math.abs(myNet))}
+        </button>
+
+        <button
+          onClick={() => setRanksOpen(true)}
+          aria-label="Hand rankings"
+          className="btn grid h-9 w-9 place-items-center rounded-2xl border border-white/10 bg-black/40 text-sm font-black text-white/70"
+        >
+          ♠?
+        </button>
 
         <button
           onClick={() => setSettingsOpen(true)}
@@ -369,6 +405,8 @@ export function TableView({ game, me, onLeave, onJoinNeeded }: Props) {
         send={send}
       />
       <AwardSheet state={state} open={awardOpen} onClose={() => setAwardOpen(false)} send={send} />
+      <MoneySheet state={state} me={player} open={moneyOpen} onClose={() => setMoneyOpen(false)} />
+      <HandRanks open={ranksOpen} onClose={() => setRanksOpen(false)} />
       {error && <Toast message={error} onDismiss={clearError} />}
       {connection === 'dropped' && (
         <button
