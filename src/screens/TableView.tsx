@@ -9,6 +9,7 @@ import { ActivityFeed } from '../components/ActivityFeed.tsx';
 import { AwardSheet } from '../components/AwardSheet.tsx';
 import { ShowdownBar } from '../components/ShowdownBar.tsx';
 import { MoneySheet } from '../components/MoneySheet.tsx';
+import { HandRecap } from '../components/HandRecap.tsx';
 import { HandRanks } from '../components/HandRanks.tsx';
 import { recordGame } from '../lib/ledger.ts';
 import { HostPanel } from '../components/HostPanel.tsx';
@@ -231,6 +232,7 @@ export function TableView({ game, me, onLeave, onJoinNeeded }: Props) {
   const host = state.players.find((p) => p.id === state.hostId);
   const hostGone = !host || host.leftTable || Date.now() - host.lastSeen > 45_000;
   const myNet = player.stack + player.cashedOut - player.buyIn;
+  const inHandNow = Boolean(state.street) && player.inHand && !player.folded;
   const pot = totalPot(state);
   const seatsAtTable = state.players.filter((p) => !p.leftTable);
   const rotate = (seat: number) => (seat - player.seat + state.maxSeats) % state.maxSeats;
@@ -265,16 +267,33 @@ export function TableView({ game, me, onLeave, onJoinNeeded }: Props) {
           </div>
         )}
 
-        {/* What this table has cost you so far — one tap for the full picture. */}
+        {/* Mid-hand this shows what you have in *this* pot, which is the number
+            that actually informs a call. Between hands it falls back to how the
+            table is going. Tap for the full picture either way. */}
         <button
           onClick={() => setMoneyOpen(true)}
           aria-label="Your money"
           className={`btn rounded-2xl border border-white/10 bg-black/40 px-2.5 py-1.5 text-[11px] font-black tabular-nums ${
-            myNet > 0 ? 'text-emerald-400' : myNet < 0 ? 'text-red-400' : 'text-[var(--color-muted)]'
+            inHandNow
+              ? 'text-[var(--color-gold)]'
+              : myNet > 0
+                ? 'text-emerald-400'
+                : myNet < 0
+                  ? 'text-red-400'
+                  : 'text-[var(--color-muted)]'
           }`}
         >
-          {myNet > 0 ? '+' : myNet < 0 ? '−' : ''}
-          {fmt(Math.abs(myNet))}
+          {inHandNow ? (
+            <>
+              <span className="text-[9px] text-[var(--color-muted)]">IN </span>
+              {fmt(player.committed)}
+            </>
+          ) : (
+            <>
+              {myNet > 0 ? '+' : myNet < 0 ? '−' : ''}
+              {fmt(Math.abs(myNet))}
+            </>
+          )}
         </button>
 
         <button
@@ -356,6 +375,14 @@ export function TableView({ game, me, onLeave, onJoinNeeded }: Props) {
       </div>
 
       {/* --- Bottom ---------------------------------------------------- */}
+      {/* Between hands, the last one is worth a look. It goes away the moment
+          the next hand starts, so it never competes with live action. */}
+      {!state.street && state.hands.length > 0 && (
+        <div className="animate-[pop_180ms_ease-out] px-3 pb-1">
+          <HandRecap recap={state.hands[0]} meId={me} />
+        </div>
+      )}
+
       <ActivityFeed log={state.log} />
 
       {state.awaitingPayout ? (

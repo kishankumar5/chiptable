@@ -74,21 +74,33 @@ async function publish(code: string, state: GameState, version: number) {
 /* ------------------------------------------------------------------ */
 
 const CREATE_LIMIT = 12;
-const CREATE_WINDOW_MS = 60 * 60 * 1000;
-const recentCreates = new Map<string, number[]>();
+const CREATE_WINDOW_SECONDS = 60 * 60;
 
 /**
- * Crude per-address throttle on making new tables. It lives in memory, so it
- * resets when the function goes cold — enough to stop a loop filling the
- * database, not a defence against a determined attacker.
+ * Per-address throttle on making new tables, counted in the database.
+ *
+ * An in-memory counter was useless here: requests are spread across isolates,
+ * so each one saw a fresh, empty map and the limit never fired. Postgres is
+ * the only shared place to keep the tally.
+ *
+ * Fails open — if the limiter itself is broken, people can still play.
  */
-function mayCreate(ip: string): boolean {
-  const now = Date.now();
-  const hits = (recentCreates.get(ip) ?? []).filter((t) => now - t < CREATE_WINDOW_MS);
-  hits.push(now);
-  recentCreates.set(ip, hits);
-  if (recentCreates.size > 5000) recentCreates.clear(); // keep memory bounded
-  return hits.length <= CREATE_LIMIT;
+async function mayCreate(ip: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/bump_rate`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({
+        p_key: `create:${ip}`,
+        p_limit: CREATE_LIMIT,
+        p_seconds: CREATE_WINDOW_SECONDS,
+      }),
+    });
+    if (!res.ok) return true;
+    return (await res.json()) !== false;
+  } catch {
+    return true;
+  }
 }
 
 const clientIp = (req: Request) =>
@@ -127,7 +139,7 @@ async function handleCreate(body: Record<string, unknown>, ip: string) {
   const hostId = String(body.hostId ?? '');
   const hostName = String(body.hostName ?? '').trim();
   if (!hostId || !hostName) return json({ error: 'Pick a nickname to get started.' }, 400);
-  if (!mayCreate(ip)) {
+  if (!(await mayCreate(ip))) {
     return json({ error: "That's a lot of tables. Take a breath and try again shortly." }, 429);
   }
 

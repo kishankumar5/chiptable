@@ -74,7 +74,9 @@ function createGame(o) {
     pots: [],
     awaitingPayout: false,
     claims: {},
+    claimAt: null,
     claimsDisputed: false,
+    hands: [],
     log: [],
     stats: { handsPlayed: 0, biggestPot: 0, biggestPotWinner: null, players: {} },
     undo: null,
@@ -144,6 +146,7 @@ function startHand(s, t) {
   s.pots = [];
   s.awaitingPayout = false;
   s.claims = {};
+  s.claimAt = null;
   s.claimsDisputed = false;
   s.lastAggressor = null;
   s.minRaise = s.bb;
@@ -205,6 +208,7 @@ function progress(s, t) {
     const amount = s.pot;
     winner.stack += amount;
     recordWin(s, winner, amount, false);
+    recordHand(s, /* @__PURE__ */ new Map([[winner.id, amount]]), false, t);
     log(s, "win", `${winner.name} won ${fmt(amount)} (uncontested)`, t);
     endHand(s);
     return;
@@ -271,6 +275,7 @@ function endHand(s) {
   s.minRaise = s.bb;
   s.awaitingPayout = false;
   s.claims = {};
+  s.claimAt = null;
   s.claimsDisputed = false;
   s.lastAggressor = null;
   for (const p of s.players) {
@@ -363,6 +368,19 @@ function recordWin(s, p, amount, atShowdown) {
     s.stats.biggestPotWinner = p.name;
   }
 }
+function recordHand(s, payouts, showdown, t) {
+  const players = s.players.filter((p) => p.inHand && (p.committed > 0 || payouts.has(p.id))).map((p) => ({
+    id: p.id,
+    name: p.name,
+    put: p.committed,
+    won: payouts.get(p.id) ?? 0,
+    folded: p.folded
+  }));
+  if (!players.length) return;
+  s.hands.unshift({ no: s.handNo, pot: s.pot, at: t, showdown, players });
+  if (s.hands.length > 25) s.hands.length = 25;
+}
+var CONTEST_MS = 4e3;
 function resolveClaims(s) {
   if (!s.awaitingPayout || !s.pots.length) return null;
   const contenders = live(s);
@@ -388,6 +406,7 @@ function award(s, assignments, t) {
   if (!s.awaitingPayout) fail("There is no pot to award right now.");
   if (!assignments.length) fail("Pick a winner first.");
   let paid = 0;
+  const payouts = /* @__PURE__ */ new Map();
   for (const a of assignments) {
     const pot = s.pots[a.pot];
     if (!pot) fail("That pot no longer exists.");
@@ -404,6 +423,7 @@ function award(s, assignments, t) {
       }
       p.stack += amount;
       paid += amount;
+      payouts.set(p.id, (payouts.get(p.id) ?? 0) + amount);
       recordWin(s, p, amount, true);
       log(s, "win", `${p.name} won ${fmt(amount)} \u2014 ${pot.label}`, t);
     }
@@ -411,6 +431,7 @@ function award(s, assignments, t) {
   if (paid !== s.pot) {
     fail("Award every pot before confirming.");
   }
+  recordHand(s, payouts, true, t);
   endHand(s);
 }
 function applyLevel(s, t) {
@@ -426,7 +447,9 @@ function applyLevel(s, t) {
 function normalize(s) {
   s.locked ??= false;
   s.claims ??= {};
+  s.claimAt ??= null;
   s.claimsDisputed ??= false;
+  s.hands ??= [];
   s.undo ??= null;
   s.stats ??= { handsPlayed: 0, biggestPot: 0, biggestPotWinner: null, players: {} };
   s.stats.players ??= {};
@@ -522,16 +545,32 @@ function reduce(prev, cmd) {
       if (!p.inHand || p.folded) fail("You were not in this hand.");
       if (cmd.claim !== "win" && cmd.claim !== "muck") fail("Say win or muck.");
       s.claims[p.id] = cmd.claim;
-      log(s, cmd.claim === "win" ? "win" : "fold", `${p.name} ${cmd.claim === "win" ? "claimed the pot" : "mucked"}`, t);
+      if (cmd.claim === "win" && s.claimAt === null) s.claimAt = t;
+      log(
+        s,
+        cmd.claim === "win" ? "win" : "fold",
+        `${p.name} ${cmd.claim === "win" ? "claimed the pot" : "mucked"}`,
+        t
+      );
       const resolved = resolveClaims(s);
       if (resolved) {
         s.claimsDisputed = false;
         award(s, resolved, t);
       } else {
-        const contenders = live(s);
-        const answered = contenders.every((x) => s.claims[x.id]);
-        s.claimsDisputed = answered && contenders.filter((x) => s.claims[x.id] === "win").length !== 1;
+        s.claimsDisputed = live(s).filter((x) => s.claims[x.id] === "win").length > 1;
       }
+      break;
+    }
+    case "settle": {
+      if (!s.awaitingPayout) fail("There is no pot to settle.");
+      const claimants = live(s).filter((p) => s.claims[p.id] === "win");
+      if (claimants.length !== 1) fail("Nobody has an uncontested claim.");
+      if (s.claimAt === null || t - s.claimAt < CONTEST_MS) fail("Give the table a moment.");
+      const winner = claimants[0];
+      if (!s.pots.every((pot) => pot.eligible.includes(winner.id))) {
+        fail("Side pots need the host to award them.");
+      }
+      award(s, s.pots.map((_, i) => ({ pot: i, winners: [winner.id] })), t);
       break;
     }
     case "award": {
@@ -732,7 +771,8 @@ var NEVER_UNDOABLE = /* @__PURE__ */ new Set([
   "rename",
   "sit",
   "claim-host",
-  "undo"
+  "undo",
+  "settle"
 ]);
 var fmt = (n) => `$${Math.round(n).toLocaleString("en-US")}`;
 
@@ -768,15 +808,23 @@ async function publish(code, state, version) {
   }
 }
 var CREATE_LIMIT = 12;
-var CREATE_WINDOW_MS = 60 * 60 * 1e3;
-var recentCreates = /* @__PURE__ */ new Map();
-function mayCreate(ip) {
-  const now = Date.now();
-  const hits = (recentCreates.get(ip) ?? []).filter((t) => now - t < CREATE_WINDOW_MS);
-  hits.push(now);
-  recentCreates.set(ip, hits);
-  if (recentCreates.size > 5e3) recentCreates.clear();
-  return hits.length <= CREATE_LIMIT;
+var CREATE_WINDOW_SECONDS = 60 * 60;
+async function mayCreate(ip) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/bump_rate`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        p_key: `create:${ip}`,
+        p_limit: CREATE_LIMIT,
+        p_seconds: CREATE_WINDOW_SECONDS
+      })
+    });
+    if (!res.ok) return true;
+    return await res.json() !== false;
+  } catch {
+    return true;
+  }
 }
 var clientIp = (req) => (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
 async function readGame(code) {
@@ -809,7 +857,7 @@ async function handleCreate(body, ip) {
   const hostId = String(body.hostId ?? "");
   const hostName = String(body.hostName ?? "").trim();
   if (!hostId || !hostName) return json({ error: "Pick a nickname to get started." }, 400);
-  if (!mayCreate(ip)) {
+  if (!await mayCreate(ip)) {
     return json({ error: "That's a lot of tables. Take a breath and try again shortly." }, 429);
   }
   for (let attempt = 0; attempt < 6; attempt++) {

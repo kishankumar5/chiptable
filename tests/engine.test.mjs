@@ -279,6 +279,111 @@ test('a single claim among mucks pays out without the host', () => {
   assert.equal(chipsInPlay(s), 3000);
 });
 
+test('one claim plus silence pays out once the contest window closes', () => {
+  let s = toShowdown();
+  const [a] = s.pots[0].eligible;
+  const potSize = s.pot;
+  const before = stackOf(s, a);
+  const t0 = s.updatedAt;
+
+  s = reduce(s, { type: 'claim', actor: a, claim: 'win', now: t0 });
+  assert.equal(s.awaitingPayout, true, 'nothing moves immediately');
+  assert.equal(s.claimAt, t0, 'the clock started');
+
+  // Too early — the table still has time to object.
+  assert.throws(() => reduce(s, { type: 'settle', actor: a, now: t0 + 1500 }), /a moment/);
+  assert.equal(s.awaitingPayout, true);
+
+  s = reduce(s, { type: 'settle', actor: a, now: t0 + 4500 });
+  assert.equal(s.awaitingPayout, false, 'paid after the window');
+  assert.equal(stackOf(s, a), before + potSize);
+  assert.equal(chipsInPlay(s), 3000);
+});
+
+test('an objection inside the window blocks the automatic payout', () => {
+  let s = toShowdown();
+  const [a, b] = s.pots[0].eligible;
+  const t0 = s.updatedAt;
+
+  s = reduce(s, { type: 'claim', actor: a, claim: 'win', now: t0 });
+  s = reduce(s, { type: 'claim', actor: b, claim: 'win', now: t0 + 900 });
+  assert.equal(s.claimsDisputed, true, 'the host is asked to decide');
+
+  assert.throws(() => reduce(s, { type: 'settle', actor: a, now: t0 + 9000 }), /uncontested/);
+  assert.equal(s.awaitingPayout, true, 'the pot is untouched');
+});
+
+test('settle refuses when a side pot is not the claimant\'s to take', () => {
+  // Short stack all-in makes a side pot the big stack is not eligible for.
+  let s = table(3, { stack: 1000 });
+  s.players[2].stack = 100;
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  let guard = 0;
+  while (s.turn && guard++ < 40) {
+    s = reduce(s, { type: 'act', actor: s.turn, move: 'allin' });
+  }
+  if (s.pots.length > 1) {
+    const soleEligible = s.pots[s.pots.length - 1].eligible;
+    const notInEveryPot = s.pots[0].eligible.find((id) => !soleEligible.includes(id));
+    if (notInEveryPot) {
+      const t0 = s.updatedAt;
+      s = reduce(s, { type: 'claim', actor: notInEveryPot, claim: 'win', now: t0 });
+      assert.throws(() => reduce(s, { type: 'settle', actor: notInEveryPot, now: t0 + 5000 }), /host/);
+    }
+  }
+  assert.equal(chipsInPlay(s), 2100, 'chips are intact either way');
+});
+
+test('every hand leaves a recap that adds up', () => {
+  let s = toShowdown();
+  const potSize = s.pot;
+  const winner = s.pots[0].eligible[0];
+  s = reduce(s, { type: 'award', actor: HOST, awards: [{ pot: 0, winners: [winner] }] });
+
+  assert.equal(s.hands.length, 1, 'the hand was recorded');
+  const recap = s.hands[0];
+  assert.equal(recap.pot, potSize);
+  assert.equal(recap.showdown, true);
+  assert.equal(
+    recap.players.reduce((n, p) => n + p.won, 0),
+    potSize,
+    'payouts in the recap equal the pot',
+  );
+  assert.equal(
+    recap.players.reduce((n, p) => n + p.put, 0),
+    potSize,
+    'contributions equal the pot too',
+  );
+  assert.equal(recap.players.find((p) => p.id === winner).won, potSize);
+});
+
+test('a folded hand is recapped as uncontested', () => {
+  let s = table(3);
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  s = reduce(s, { type: 'act', actor: s.turn, move: 'fold' });
+  s = reduce(s, { type: 'act', actor: s.turn, move: 'fold' });
+
+  const recap = s.hands[0];
+  assert.equal(recap.showdown, false);
+  assert.equal(recap.pot, 15);
+  assert.ok(recap.players.some((p) => p.folded), 'folders are listed');
+  assert.equal(recap.players.reduce((n, p) => n + p.won, 0), 15);
+});
+
+test('recaps are capped so the row cannot grow forever', () => {
+  let s = table(3);
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  s = reduce(s, { type: 'act', actor: s.turn, move: 'fold' });
+  s = reduce(s, { type: 'act', actor: s.turn, move: 'fold' });
+  for (let i = 0; i < 29; i++) {
+    s = reduce(s, { type: 'start-hand', actor: HOST });
+    s = reduce(s, { type: 'act', actor: s.turn, move: 'fold' });
+    s = reduce(s, { type: 'act', actor: s.turn, move: 'fold' });
+  }
+  assert.equal(s.hands.length, 25, 'oldest hands fall off');
+  assert.equal(s.hands[0].no, 30, 'newest first');
+});
+
 test('two players claiming the same pot hands it to the host', () => {
   let s = toShowdown();
   const [a, b, c] = s.pots[0].eligible;

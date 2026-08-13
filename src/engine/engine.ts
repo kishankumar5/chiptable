@@ -131,7 +131,9 @@ export function createGame(o: CreateOptions): GameState {
     pots: [],
     awaitingPayout: false,
     claims: {},
+    claimAt: null,
     claimsDisputed: false,
+    hands: [],
     log: [],
     stats: { handsPlayed: 0, biggestPot: 0, biggestPotWinner: null, players: {} },
     undo: null,
@@ -215,6 +217,7 @@ function startHand(s: GameState, t: number) {
   s.pots = [];
   s.awaitingPayout = false;
   s.claims = {};
+  s.claimAt = null;
   s.claimsDisputed = false;
   s.lastAggressor = null;
   s.minRaise = s.bb;
@@ -293,6 +296,7 @@ function progress(s: GameState, t: number) {
     const amount = s.pot;
     winner.stack += amount;
     recordWin(s, winner, amount, false);
+    recordHand(s, new Map([[winner.id, amount]]), false, t);
     log(s, 'win', `${winner.name} won ${fmt(amount)} (uncontested)`, t);
     endHand(s);
     return;
@@ -381,6 +385,7 @@ function endHand(s: GameState) {
   s.minRaise = s.bb;
   s.awaitingPayout = false;
   s.claims = {};
+  s.claimAt = null;
   s.claimsDisputed = false;
   s.lastAggressor = null;
   for (const p of s.players) {
@@ -490,9 +495,32 @@ function recordWin(s: GameState, p: Player, amount: number, atShowdown: boolean)
   }
 }
 
+/**
+ * Snapshot the hand before endHand() wipes it. Called with what each winner
+ * was actually paid, so the recap always adds up to the pot.
+ */
+function recordHand(s: GameState, payouts: Map<string, number>, showdown: boolean, t: number) {
+  const players = s.players
+    .filter((p) => p.inHand && (p.committed > 0 || payouts.has(p.id)))
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      put: p.committed,
+      won: payouts.get(p.id) ?? 0,
+      folded: p.folded,
+    }));
+  if (!players.length) return;
+
+  s.hands.unshift({ no: s.handNo, pot: s.pot, at: t, showdown, players });
+  if (s.hands.length > 25) s.hands.length = 25;
+}
+
 /* ------------------------------------------------------------------ */
 /* Showdown claims                                                     */
 /* ------------------------------------------------------------------ */
+
+/** How long everyone else gets to object before a claimed pot is paid. */
+export const CONTEST_MS = 4000;
 
 /**
  * Work out each pot's winner from what the players themselves said. A pot is
@@ -542,6 +570,7 @@ function award(s: GameState, assignments: { pot: number; winners: string[] }[], 
   if (!assignments.length) fail('Pick a winner first.');
 
   let paid = 0;
+  const payouts = new Map<string, number>();
   for (const a of assignments) {
     const pot = s.pots[a.pot];
     if (!pot) fail('That pot no longer exists.');
@@ -559,6 +588,7 @@ function award(s: GameState, assignments: { pot: number; winners: string[] }[], 
       }
       p.stack += amount;
       paid += amount;
+      payouts.set(p.id, (payouts.get(p.id) ?? 0) + amount);
       recordWin(s, p, amount, true);
       log(s, 'win', `${p.name} won ${fmt(amount)} — ${pot.label}`, t);
     }
@@ -568,6 +598,7 @@ function award(s: GameState, assignments: { pot: number; winners: string[] }[], 
     // Every chip must be accounted for; refuse a partial payout.
     fail('Award every pot before confirming.');
   }
+  recordHand(s, payouts, true, t);
   endHand(s);
 }
 
@@ -598,7 +629,9 @@ function applyLevel(s: GameState, t: number) {
 export function normalize(s: GameState): GameState {
   s.locked ??= false;
   s.claims ??= {};
+  s.claimAt ??= null;
   s.claimsDisputed ??= false;
+  s.hands ??= [];
   s.undo ??= null;
   s.stats ??= { handsPlayed: 0, biggestPot: 0, biggestPotWinner: null, players: {} };
   s.stats.players ??= {};
@@ -714,7 +747,13 @@ export function reduce(prev: GameState, cmd: Command): GameState {
       if (cmd.claim !== 'win' && cmd.claim !== 'muck') fail('Say win or muck.');
 
       s.claims[p.id] = cmd.claim;
-      log(s, cmd.claim === 'win' ? 'win' : 'fold', `${p.name} ${cmd.claim === 'win' ? 'claimed the pot' : 'mucked'}`, t);
+      if (cmd.claim === 'win' && s.claimAt === null) s.claimAt = t;
+      log(
+        s,
+        cmd.claim === 'win' ? 'win' : 'fold',
+        `${p.name} ${cmd.claim === 'win' ? 'claimed the pot' : 'mucked'}`,
+        t,
+      );
 
       const resolved = resolveClaims(s);
       if (resolved) {
@@ -722,11 +761,26 @@ export function reduce(prev: GameState, cmd: Command): GameState {
         award(s, resolved, t);
       } else {
         // Two people both saying they won is the host's call, not ours.
-        const contenders = live(s);
-        const answered = contenders.every((x) => s.claims[x.id]);
-        s.claimsDisputed =
-          answered && contenders.filter((x) => s.claims[x.id] === 'win').length !== 1;
+        s.claimsDisputed = live(s).filter((x) => s.claims[x.id] === 'win').length > 1;
       }
+      break;
+    }
+
+    case 'settle': {
+      // Fires when the contest window closes. Anyone at the table may ask for
+      // it — the server checks its own clock, so no phone can rush a payout.
+      if (!s.awaitingPayout) fail('There is no pot to settle.');
+      const claimants = live(s).filter((p) => s.claims[p.id] === 'win');
+      if (claimants.length !== 1) fail('Nobody has an uncontested claim.');
+      if (s.claimAt === null || t - s.claimAt < CONTEST_MS) fail('Give the table a moment.');
+
+      const winner = claimants[0];
+      // A lone claimant sweeps only if they were eligible for every pot. Side
+      // pots they were not in still need the host to decide.
+      if (!s.pots.every((pot) => pot.eligible.includes(winner.id))) {
+        fail('Side pots need the host to award them.');
+      }
+      award(s, s.pots.map((_, i) => ({ pot: i, winners: [winner.id] })), t);
       break;
     }
 
@@ -955,6 +1009,7 @@ const NEVER_UNDOABLE = new Set<string>([
   'sit',
   'claim-host',
   'undo',
+  'settle',
 ]);
 
 /* ------------------------------------------------------------------ */

@@ -1,11 +1,15 @@
+import { useEffect, useState } from 'react';
 import type { Command, GameState, Player } from '../engine/types.ts';
-import { fmt, totalPot } from '../engine/engine.ts';
+import { CONTEST_MS, fmt, totalPot } from '../engine/engine.ts';
 import { Button } from './ui.tsx';
 import { buzz, play } from '../lib/sound.ts';
 
 /**
- * Showdown, settled by the people holding the cards. One tap each and the
- * chips move — the host only gets involved when two players disagree.
+ * Showdown, settled by the people holding the cards.
+ *
+ * The winner taps once. Everyone else does nothing — silence is agreement,
+ * exactly like folding your cards face down at a real table. Anyone who
+ * disagrees has a few seconds to say so, and then it goes to the host.
  */
 export function ShowdownBar({
   state,
@@ -22,14 +26,25 @@ export function ShowdownBar({
 }) {
   const pot = totalPot(state);
   const inHand = me.inHand && !me.folded;
-  const myClaim = state.claims[me.id];
   const contenders = state.players.filter((p) => p.inHand && !p.folded);
-  const waitingFor = contenders.filter((p) => !state.claims[p.id]);
+  const claimant = contenders.find((p) => state.claims[p.id] === 'win') ?? null;
+  const iClaimed = claimant?.id === me.id;
+  const left = useContestCountdown(state.claimAt, Boolean(claimant) && !state.claimsDisputed);
+
+  // When the window closes, ask the server to pay. Everyone's phone asks; the
+  // server's clock decides, and the extra attempts fail harmlessly.
+  useEffect(() => {
+    if (!claimant || state.claimsDisputed || !state.awaitingPayout) return;
+    if (left > 0) return;
+    const id = setTimeout(() => void send({ type: 'settle' }), 150);
+    return () => clearTimeout(id);
+  }, [claimant, state.claimsDisputed, state.awaitingPayout, left, send]);
 
   const wrap = (children: React.ReactNode) => (
     <div className="px-3 pb-[calc(0.75rem+var(--sab))] pt-2">{children}</div>
   );
 
+  /* Two people say they won — only the cards can settle it. */
   if (state.claimsDisputed) {
     return wrap(
       <div className="panel px-4 py-3.5">
@@ -48,7 +63,43 @@ export function ShowdownBar({
     );
   }
 
-  if (inHand && !myClaim) {
+  /* Someone has claimed it — the pot is on its way unless anyone objects. */
+  if (claimant) {
+    return wrap(
+      <div className="panel overflow-hidden px-4 py-3.5">
+        <div className="text-center text-base font-black text-ink">
+          {iClaimed ? 'You take' : `${claimant.name} takes`}{' '}
+          <span className="text-[var(--color-gold)]">{fmt(pot)}</span>
+        </div>
+
+        {/* A draining bar reads faster than a number while chips are moving. */}
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+          <div
+            className="h-full rounded-full bg-[var(--color-gold)] transition-[width] duration-300 ease-linear"
+            style={{ width: `${Math.max(0, Math.min(100, (left / CONTEST_MS) * 100))}%` }}
+          />
+        </div>
+
+        {inHand && !iClaimed ? (
+          <Button
+            variant="dark"
+            full
+            className="mt-2.5"
+            onClick={() => void send({ type: 'claim', claim: 'win' })}
+          >
+            No — I won this one
+          </Button>
+        ) : (
+          <div className="mt-2 text-center text-[11px] text-[var(--color-muted)]">
+            {left > 0 ? 'Paying out…' : 'Settling…'}
+          </div>
+        )}
+      </div>,
+    );
+  }
+
+  /* Nobody has claimed yet. The winner is the only one who needs to act. */
+  if (inHand) {
     return wrap(
       <>
         <div className="mb-2 flex animate-[pop_180ms_ease-out] items-center justify-between rounded-2xl bg-[var(--color-gold)] px-4 py-1.5">
@@ -57,30 +108,25 @@ export function ShowdownBar({
           </span>
           <span className="text-sm font-black text-[#3b2a00]">{fmt(pot)}</span>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <Button
-            variant="dark"
-            size="lg"
-            onClick={() => void send({ type: 'claim', claim: 'muck' })}
-          >
-            MUCK
-          </Button>
-          <Button
-            variant="gold"
-            size="lg"
-            onClick={() => {
-              play('win');
-              buzz([10, 40, 10]);
-              void send({ type: 'claim', claim: 'win' });
-            }}
-          >
-            I WIN
-          </Button>
+        <Button
+          variant="gold"
+          size="lg"
+          full
+          onClick={() => {
+            play('win');
+            buzz([10, 40, 10]);
+            void send({ type: 'claim', claim: 'win' });
+          }}
+        >
+          I WIN — TAKE {fmt(pot)}
+        </Button>
+        <div className="mt-1.5 text-center text-[11px] text-[var(--color-muted)]">
+          Only the winner taps. Everyone else can sit tight.
         </div>
         {isHost && (
           <button
             onClick={onDecide}
-            className="btn mt-2 w-full py-1.5 text-[11px] font-bold text-[var(--color-muted)]"
+            className="btn mt-1 w-full py-1.5 text-[11px] font-bold text-[var(--color-muted)]"
           >
             or award it yourself
           </button>
@@ -89,19 +135,12 @@ export function ShowdownBar({
     );
   }
 
+  /* Folded or watching. */
   return wrap(
     <div className="panel px-4 py-3.5">
-      <div className="text-center text-sm font-black text-ink">
-        {myClaim === 'win'
-          ? 'You claimed the pot'
-          : myClaim === 'muck'
-            ? 'You mucked'
-            : `Showdown — ${fmt(pot)}`}
-      </div>
+      <div className="text-center text-sm font-black text-ink">Showdown — {fmt(pot)}</div>
       <div className="mt-0.5 text-center text-[11px] text-[var(--color-muted)]">
-        {waitingFor.length
-          ? `Waiting for ${waitingFor.map((p) => p.name).join(', ')}…`
-          : 'Settling up…'}
+        Waiting for {contenders.map((p) => p.name).join(' or ')}…
       </div>
       {isHost && (
         <Button variant="ghost" size="sm" full className="mt-2.5" onClick={onDecide}>
@@ -110,4 +149,17 @@ export function ShowdownBar({
       )}
     </div>,
   );
+}
+
+/** Milliseconds left in the contest window, ticking smoothly. */
+function useContestCountdown(claimAt: number | null, active: boolean) {
+  const [left, setLeft] = useState(CONTEST_MS);
+  useEffect(() => {
+    if (!active || claimAt === null) return setLeft(CONTEST_MS);
+    const tick = () => setLeft(Math.max(0, CONTEST_MS - (Date.now() - claimAt)));
+    tick();
+    const id = setInterval(tick, 120);
+    return () => clearInterval(id);
+  }, [claimAt, active]);
+  return left;
 }

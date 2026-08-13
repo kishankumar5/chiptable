@@ -64,6 +64,23 @@ export interface Tourney {
 /** What a player said about the pot at showdown. */
 export type Claim = 'win' | 'muck';
 
+/** What happened in one hand, kept so nobody has to do arithmetic. */
+export interface HandRecap {
+  no: number;
+  pot: number;
+  at: number;
+  showdown: boolean;
+  players: {
+    id: string;
+    name: string;
+    /** Everything they put in during the hand. */
+    put: number;
+    /** What they took out of the pot. */
+    won: number;
+    folded: boolean;
+  }[];
+}
+
 /** Tallied as hands play so an end-of-game summary needs no extra bookkeeping. */
 export interface PlayerStats {
   handsWon: number;
@@ -110,8 +127,12 @@ export interface GameState {
   awaitingPayout: boolean;
   /** Showdown answers, keyed by player id. Cleared with every new hand. */
   claims: Record<string, Claim>;
+  /** Epoch ms of the first claim, so the contest window is timed by the server. */
+  claimAt: number | null;
   /** Set when players disagree about who won, so the host steps in. */
   claimsDisputed: boolean;
+  /** Most recent hands, newest first. Bounded. */
+  hands: HandRecap[];
   log: LogEntry[];
   tourney: Tourney | null;
   stats: GameStats;
@@ -133,6 +154,7 @@ export type ActionType =
   | 'start-hand'
   | 'act'
   | 'claim'
+  | 'settle'
   | 'award'
   | 'undo'
   | 'set-seats'

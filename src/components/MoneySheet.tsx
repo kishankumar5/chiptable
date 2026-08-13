@@ -1,6 +1,7 @@
 import { fmt } from '../engine/engine.ts';
 import type { GameState, Player } from '../engine/types.ts';
 import { Sheet } from './ui.tsx';
+import { HandRecap } from './HandRecap.tsx';
 import { recentDays, todayTotals } from '../lib/ledger.ts';
 
 const sign = (n: number) => (n > 0 ? `+${fmt(n)}` : n < 0 ? `−${fmt(Math.abs(n))}` : fmt(0));
@@ -67,6 +68,19 @@ export function MoneySheet({
           {sign(day.net)}
         </div>
       </section>
+
+      {state.hands.length > 0 && (
+        <section className="mt-4">
+          <h3 className="mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[var(--color-muted)]">
+            Recent hands
+          </h3>
+          <div className="space-y-2">
+            {state.hands.slice(0, 8).map((h) => (
+              <HandRecap key={`${h.no}-${h.at}`} recap={h} meId={me.id} />
+            ))}
+          </div>
+        </section>
+      )}
 
       {days.length > 0 && (
         <section className="mt-4">
