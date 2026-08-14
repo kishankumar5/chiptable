@@ -62,7 +62,23 @@ export function Create({ onReady, onBack }: { onReady: (code: string) => void; o
           <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-[var(--color-muted)]">
             Room
           </div>
-          <div className="gold-text text-6xl font-black tracking-[0.15em]">{code}</div>
+          {/* Sized by how many characters there are. A six-character code at
+              the old fixed 60px is wider than this panel, so the first and
+              last letters were being clipped. The negative margin cancels the
+              trailing letter space so it stays optically centred. */}
+          <div
+            className={`gold-text -mr-[0.08em] whitespace-nowrap font-black leading-tight tracking-[0.08em] ${
+              // Measured at 0.80em per character including tracking, against
+              // ~266px of usable panel. The old fixed 60px needed 313px.
+              code.length <= 4
+                ? 'text-[clamp(2.5rem,15vw,3.75rem)]'
+                : code.length <= 6
+                  ? 'text-[clamp(2rem,13.5vw,3.25rem)]'
+                  : 'text-[clamp(1.5rem,9vw,2.5rem)]'
+            }`}
+          >
+            {code}
+          </div>
           <div className="mt-2 truncate text-[11px] text-white/35">{gameUrl(code)}</div>
         </div>
 

@@ -313,6 +313,62 @@ test('an objection inside the window blocks the automatic payout', () => {
   assert.equal(s.awaitingPayout, true, 'the pot is untouched');
 });
 
+test('a claimant who cannot sweep every pot hands it over without erroring', () => {
+  // The exact shape that caused the runaway loop: a side pot the claimant is
+  // not eligible for. Refusing with an error made every phone retry forever.
+  let s = table(3, { stack: 1000 });
+  s.players[2].stack = 100;
+  s = reduce(s, { type: 'start-game', actor: HOST });
+  let guard = 0;
+  while (s.turn && guard++ < 40) s = reduce(s, { type: 'act', actor: s.turn, move: 'allin' });
+
+  assert.ok(s.pots.length > 1, 'this hand really does have a side pot');
+  const onlyInMain = s.pots[0].eligible.find((id) => !s.pots[1].eligible.includes(id));
+  assert.ok(onlyInMain, 'and someone eligible for only part of it');
+
+  const t0 = s.updatedAt;
+  s = reduce(s, { type: 'claim', actor: onlyInMain, claim: 'win', now: t0 });
+  const after = reduce(s, { type: 'settle', actor: onlyInMain, now: t0 + 5000 });
+
+  assert.equal(after.claimsDisputed, true, 'handed to the host');
+  assert.equal(after.awaitingPayout, true, 'pot still waiting to be awarded');
+  assert.equal(chipsInPlay(after), 2100, 'nothing moved');
+});
+
+test('players cannot hand themselves chips', () => {
+  let s = table(3, { stack: 500 });
+  const before = chipsInPlay(s);
+
+  assert.throws(() => reduce(s, { type: 'rebuy', actor: 'p1', amount: 100000 }), /Only the host/);
+  assert.throws(() => reduce(s, { type: 'rebuy', actor: 'p2' }), /Only the host/);
+  assert.throws(() => reduce(s, { type: 'cash-out', actor: 'p1' }), /Only the host/);
+  assert.throws(
+    () => reduce(s, { type: 'set-stack', actor: 'p1', target: 'p1', amount: 9999 }),
+    /Only the host/,
+  );
+  assert.equal(chipsInPlay(s), before, 'not a chip moved');
+
+  s = reduce(s, { type: 'rebuy', actor: HOST, target: 'p1', amount: 200 });
+  assert.equal(stackOf(s, 'p1'), 700, 'the host still can');
+  assert.equal(s.players.find((p) => p.id === 'p1').buyIn, 700, 'and it counts as money in');
+});
+
+test('the table cannot be taken over while the host is present', () => {
+  let s = table(3);
+  const t0 = s.updatedAt;
+  s = reduce(s, { type: 'heartbeat', actor: HOST, now: t0 });
+
+  assert.throws(() => reduce(s, { type: 'claim-host', actor: 'p1', now: t0 + 1000 }), /still here/);
+  // The old threshold was 45s, short enough to fire during a normal game.
+  assert.throws(
+    () => reduce(s, { type: 'claim-host', actor: 'p1', now: t0 + 60_000 }),
+    /still here/,
+  );
+
+  const taken = reduce(s, { type: 'claim-host', actor: 'p1', now: t0 + 121_000 });
+  assert.equal(taken.hostId, 'p1', 'only after two full minutes away');
+});
+
 test('every hand leaves a recap that adds up', () => {
   let s = toShowdown();
   const potSize = s.pot;
