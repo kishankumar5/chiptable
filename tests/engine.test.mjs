@@ -313,27 +313,6 @@ test('an objection inside the window blocks the automatic payout', () => {
   assert.equal(s.awaitingPayout, true, 'the pot is untouched');
 });
 
-test('settle refuses when a side pot is not the claimant\'s to take', () => {
-  // Short stack all-in makes a side pot the big stack is not eligible for.
-  let s = table(3, { stack: 1000 });
-  s.players[2].stack = 100;
-  s = reduce(s, { type: 'start-game', actor: HOST });
-  let guard = 0;
-  while (s.turn && guard++ < 40) {
-    s = reduce(s, { type: 'act', actor: s.turn, move: 'allin' });
-  }
-  if (s.pots.length > 1) {
-    const soleEligible = s.pots[s.pots.length - 1].eligible;
-    const notInEveryPot = s.pots[0].eligible.find((id) => !soleEligible.includes(id));
-    if (notInEveryPot) {
-      const t0 = s.updatedAt;
-      s = reduce(s, { type: 'claim', actor: notInEveryPot, claim: 'win', now: t0 });
-      assert.throws(() => reduce(s, { type: 'settle', actor: notInEveryPot, now: t0 + 5000 }), /host/);
-    }
-  }
-  assert.equal(chipsInPlay(s), 2100, 'chips are intact either way');
-});
-
 test('every hand leaves a recap that adds up', () => {
   let s = toShowdown();
   const potSize = s.pot;
@@ -661,8 +640,9 @@ test('rebuy and cash-out keep the settlement summing to zero', () => {
     actor: HOST,
     awards: s.pots.map((p, i) => ({ pot: i, winners: [p.eligible[0]] })),
   });
-  s = reduce(s, { type: 'rebuy', actor: 'p1', amount: 20 });
-  s = reduce(s, { type: 'cash-out', actor: 'p2' });
+  // Both go through the host now — players cannot move their own money.
+  s = reduce(s, { type: 'rebuy', actor: HOST, target: 'p1', amount: 20 });
+  s = reduce(s, { type: 'cash-out', actor: HOST, target: 'p2' });
 
   const results = settlement(s);
   const total = results.reduce((n, r) => n + r.net, 0);
@@ -680,7 +660,9 @@ test('a stale host can be replaced, a present one cannot', () => {
   let s = table(3);
   // The host was last seen at t=1, so ask at t=1: they are still here.
   assert.throws(() => reduce(s, { type: 'claim-host', actor: 'p1', now: 1 }), /still here/);
-  s = reduce(s, { type: 'claim-host', actor: 'p1', now: 60_000 });
+  // A minute is not enough — that used to be, and it fired during real games.
+  assert.throws(() => reduce(s, { type: 'claim-host', actor: 'p1', now: 60_000 }), /still here/);
+  s = reduce(s, { type: 'claim-host', actor: 'p1', now: 121_000 });
   assert.equal(s.hostId, 'p1');
 });
 

@@ -381,6 +381,7 @@ function recordHand(s, payouts, showdown, t) {
   if (s.hands.length > 25) s.hands.length = 25;
 }
 var CONTEST_MS = 4e3;
+var HOST_AWAY_MS = 12e4;
 function resolveClaims(s) {
   if (!s.awaitingPayout || !s.pots.length) return null;
   const contenders = live(s);
@@ -506,7 +507,7 @@ function reduce(prev, cmd) {
     }
     case "claim-host": {
       const host = byId(s, s.hostId);
-      const gone = !host || host.leftTable || t - host.lastSeen > 45e3;
+      const gone = !host || host.leftTable || t - host.lastSeen > HOST_AWAY_MS;
       if (!gone) fail("The host is still here.");
       const p = need(s, cmd.actor);
       s.hostId = p.id;
@@ -568,7 +569,9 @@ function reduce(prev, cmd) {
       if (s.claimAt === null || t - s.claimAt < CONTEST_MS) fail("Give the table a moment.");
       const winner = claimants[0];
       if (!s.pots.every((pot) => pot.eligible.includes(winner.id))) {
-        fail("Side pots need the host to award them.");
+        s.claimsDisputed = true;
+        log(s, "info", "Side pots \u2014 the host needs to award this one", t);
+        break;
       }
       award(s, s.pots.map((_, i) => ({ pot: i, winners: [winner.id] })), t);
       break;
@@ -635,8 +638,8 @@ function reduce(prev, cmd) {
       break;
     }
     case "rebuy": {
+      assertHost(s, cmd.actor);
       const p = need(s, cmd.target ?? cmd.actor);
-      if (cmd.target && cmd.target !== cmd.actor) assertHost(s, cmd.actor);
       const amount = chips(cmd.amount ?? s.startingStack);
       if (amount <= 0) fail("Enter an amount.");
       if (p.inHand && s.street) fail("Wait until the hand is over.");
@@ -647,8 +650,8 @@ function reduce(prev, cmd) {
       break;
     }
     case "cash-out": {
+      assertHost(s, cmd.actor);
       const p = need(s, cmd.target ?? cmd.actor);
-      if (cmd.target && cmd.target !== cmd.actor) assertHost(s, cmd.actor);
       if (p.inHand && s.street) fail("Wait until the hand is over.");
       p.cashedOut += p.stack;
       log(s, "host", `${p.name} cashed out ${fmt(p.stack)}`, t);

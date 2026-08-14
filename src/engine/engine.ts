@@ -523,6 +523,12 @@ function recordHand(s: GameState, payouts: Map<string, number>, showdown: boolea
 export const CONTEST_MS = 4000;
 
 /**
+ * How long a host must be unreachable before anyone else may take the table
+ * over. Long enough that it never comes up while they are sitting right there.
+ */
+export const HOST_AWAY_MS = 120_000;
+
+/**
  * Work out each pot's winner from what the players themselves said. A pot is
  * settled when only one eligible player is still claiming it — either because
  * everyone else mucked, or because exactly one said they won. Anything less
@@ -700,7 +706,7 @@ export function reduce(prev: GameState, cmd: Command): GameState {
 
     case 'claim-host': {
       const host = byId(s, s.hostId);
-      const gone = !host || host.leftTable || t - host.lastSeen > 45_000;
+      const gone = !host || host.leftTable || t - host.lastSeen > HOST_AWAY_MS;
       if (!gone) fail('The host is still here.');
       const p = need(s, cmd.actor);
       s.hostId = p.id;
@@ -775,10 +781,14 @@ export function reduce(prev: GameState, cmd: Command): GameState {
       if (s.claimAt === null || t - s.claimAt < CONTEST_MS) fail('Give the table a moment.');
 
       const winner = claimants[0];
-      // A lone claimant sweeps only if they were eligible for every pot. Side
-      // pots they were not in still need the host to decide.
+      // A lone claimant sweeps only if they were eligible for every pot. When
+      // side pots are involved this hand out to the host — as a state change,
+      // not an error, so no client sits there retrying something that will
+      // never succeed.
       if (!s.pots.every((pot) => pot.eligible.includes(winner.id))) {
-        fail('Side pots need the host to award them.');
+        s.claimsDisputed = true;
+        log(s, 'info', 'Side pots — the host needs to award this one', t);
+        break;
       }
       award(s, s.pots.map((_, i) => ({ pot: i, winners: [winner.id] })), t);
       break;
@@ -855,8 +865,10 @@ export function reduce(prev: GameState, cmd: Command): GameState {
     }
 
     case 'rebuy': {
+      // Chips are money. Only the host adds them — to anyone, including
+      // themselves. Players used to be able to top up their own stack.
+      assertHost(s, cmd.actor);
       const p = need(s, cmd.target ?? cmd.actor);
-      if (cmd.target && cmd.target !== cmd.actor) assertHost(s, cmd.actor);
       const amount = chips(cmd.amount ?? s.startingStack);
       if (amount <= 0) fail('Enter an amount.');
       if (p.inHand && s.street) fail('Wait until the hand is over.');
@@ -868,8 +880,10 @@ export function reduce(prev: GameState, cmd: Command): GameState {
     }
 
     case 'cash-out': {
+      // Cashing out changes the settlement everyone splits at the end, so it
+      // goes through the host too.
+      assertHost(s, cmd.actor);
       const p = need(s, cmd.target ?? cmd.actor);
-      if (cmd.target && cmd.target !== cmd.actor) assertHost(s, cmd.actor);
       if (p.inHand && s.street) fail('Wait until the hand is over.');
       p.cashedOut += p.stack;
       log(s, 'host', `${p.name} cashed out ${fmt(p.stack)}`, t);

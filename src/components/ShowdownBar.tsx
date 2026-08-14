@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Command, GameState, Player } from '../engine/types.ts';
 import { CONTEST_MS, fmt, totalPot } from '../engine/engine.ts';
 import { Button } from './ui.tsx';
@@ -31,14 +31,47 @@ export function ShowdownBar({
   const iClaimed = claimant?.id === me.id;
   const left = useContestCountdown(state.claimAt, Boolean(claimant) && !state.claimsDisputed);
 
-  // When the window closes, ask the server to pay. Everyone's phone asks; the
-  // server's clock decides, and the extra attempts fail harmlessly.
+  // Ask the server to pay when the window closes — exactly once per claim.
+  //
+  // This used to re-run on every countdown tick from every phone at the table.
+  // If the server refused (a side pot the claimant could not sweep, say), the
+  // request repeated several times a second on every device, forever, and the
+  // errors were swallowed because settle is a background command. Now: one
+  // attempt, remembered by hand, and only two devices ever try.
+  const asked = useRef<string | null>(null);
+  const sendRef = useRef(send);
+  sendRef.current = send;
+
   useEffect(() => {
-    if (!claimant || state.claimsDisputed || !state.awaitingPayout) return;
-    if (left > 0) return;
-    const id = setTimeout(() => void send({ type: 'settle' }), 150);
+    if (!claimant || state.claimsDisputed || !state.awaitingPayout || state.claimAt === null) {
+      return;
+    }
+    const key = `${state.code}:${state.handNo}:${state.claimAt}`;
+    if (asked.current === key) return;
+
+    // The winner's own phone asks. The host is a backup in case that phone
+    // locked or died mid-claim; everyone else stays out of it entirely.
+    if (!iClaimed && !isHost) return;
+
+    const due = CONTEST_MS - (Date.now() - state.claimAt);
+    const id = setTimeout(
+      () => {
+        asked.current = key;
+        void sendRef.current({ type: 'settle' });
+      },
+      Math.max(0, due) + (iClaimed ? 150 : 2000),
+    );
     return () => clearTimeout(id);
-  }, [claimant, state.claimsDisputed, state.awaitingPayout, left, send]);
+  }, [
+    claimant,
+    iClaimed,
+    isHost,
+    state.claimAt,
+    state.claimsDisputed,
+    state.awaitingPayout,
+    state.code,
+    state.handNo,
+  ]);
 
   const wrap = (children: React.ReactNode) => (
     <div className="px-3 pb-[calc(0.75rem+var(--sab))] pt-2">{children}</div>

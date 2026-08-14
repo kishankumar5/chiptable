@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Game } from '../hooks/useGame.ts';
-import { fmt, seatRoles, totalPot } from '../engine/engine.ts';
+import { fmt, HOST_AWAY_MS, seatRoles, totalPot } from '../engine/engine.ts';
 import type { GameState } from '../engine/types.ts';
 import { EmptySeat, Seat } from '../components/Seat.tsx';
 import { ChipStack } from '../components/Chips.tsx';
@@ -230,7 +230,7 @@ export function TableView({ game, me, onLeave, onJoinNeeded }: Props) {
   }
 
   const host = state.players.find((p) => p.id === state.hostId);
-  const hostGone = !host || host.leftTable || Date.now() - host.lastSeen > 45_000;
+  const hostGone = !host || host.leftTable || Date.now() - host.lastSeen > HOST_AWAY_MS;
   const myNet = player.stack + player.cashedOut - player.buyIn;
   const inHandNow = Boolean(state.street) && player.inHand && !player.folded;
   const pot = totalPot(state);

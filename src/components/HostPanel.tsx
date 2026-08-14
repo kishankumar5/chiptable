@@ -71,7 +71,8 @@ export function HostPanel({ state, me, isHost, hostGone, open, onClose, send }: 
           >
             {me.sittingOut ? 'Sit back in' : 'Sit out next hand'}
           </Button>
-          {state.mode === 'cash' && (
+          {/* Chips are money, so only the host hands them out. Players ask. */}
+          {state.mode === 'cash' && isHost && (
             <Button
               variant="dark"
               disabled={midHand}
@@ -80,17 +81,25 @@ export function HostPanel({ state, me, isHost, hostGone, open, onClose, send }: 
               Rebuy {fmt(state.startingStack)}
             </Button>
           )}
-          {state.mode === 'cash' && (
+          {state.mode === 'cash' && isHost && (
             <Button variant="dark" disabled={midHand} onClick={() => void send({ type: 'cash-out' })}>
               Cash out
             </Button>
           )}
+          {/* Only ever offered when the host has genuinely vanished, so a table
+              cannot be taken over while they are sitting right there. */}
           {hostGone && !isHost && (
             <Button variant="gold" full onClick={() => void send({ type: 'claim-host' })}>
-              👑 Become host
+              👑 Host has been away 2 minutes — take over
             </Button>
           )}
         </section>
+
+        {!isHost && state.mode === 'cash' && (
+          <p className="-mt-1 text-center text-[11px] text-[var(--color-muted)]">
+            Need chips or want to cash out? Ask the host — only they can move money.
+          </p>
+        )}
 
         {!isHost && (
           <p className="text-center text-[11px] text-[var(--color-muted)]">
@@ -295,7 +304,7 @@ export function HostPanel({ state, me, isHost, hostGone, open, onClose, send }: 
                             disabled={midHand}
                             onClick={() => void send({ type: 'set-dealer', target: p.id })}
                           >
-                            Give button
+                            Make dealer
                           </Button>
                           <Button
                             variant="dark"
