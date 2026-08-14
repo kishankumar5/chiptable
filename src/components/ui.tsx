@@ -73,6 +73,19 @@ export function Field({
   );
 }
 
+/**
+ * Spread onto any text field on a form screen. When the on-screen keyboard
+ * opens it covers the lower half of the display, and a field sitting under it
+ * cannot be scrolled into view on its own — you end up typing blind.
+ */
+export const keepVisible = {
+  onFocus: (e: React.FocusEvent<HTMLInputElement>) => {
+    const el = e.currentTarget;
+    // Wait for the keyboard animation, otherwise we scroll to the old layout.
+    setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300);
+  },
+};
+
 export const inputClass =
   'w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3.5 text-lg font-bold text-ink outline-none placeholder:text-white/25 focus:border-[var(--color-gold)]/70 focus:ring-2 focus:ring-[var(--color-gold)]/20';
 

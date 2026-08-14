@@ -5,6 +5,13 @@ import { Button } from './ui.tsx';
 import { buzz, play } from '../lib/sound.ts';
 
 /**
+ * Payout requests already made, by table + hand + claim. Module scope on
+ * purpose: it has to outlive the component, which unmounts the moment a payout
+ * is optimistically applied and remounts if the server rolls it back.
+ */
+const attempted = new Set<string>();
+
+/**
  * Showdown, settled by the people holding the cards.
  *
  * The winner taps once. Everyone else does nothing — silence is agreement,
@@ -33,12 +40,10 @@ export function ShowdownBar({
 
   // Ask the server to pay when the window closes — exactly once per claim.
   //
-  // This used to re-run on every countdown tick from every phone at the table.
-  // If the server refused (a side pot the claimant could not sweep, say), the
-  // request repeated several times a second on every device, forever, and the
-  // errors were swallowed because settle is a background command. Now: one
-  // attempt, remembered by hand, and only two devices ever try.
-  const asked = useRef<string | null>(null);
+  // The guard deliberately lives outside the component. This bar is only
+  // mounted while a payout is pending, so a rolled-back attempt unmounts it
+  // and a component-level ref would be wiped between tries — which is exactly
+  // how the original runaway loop kept restarting itself.
   const sendRef = useRef(send);
   sendRef.current = send;
 
@@ -47,7 +52,7 @@ export function ShowdownBar({
       return;
     }
     const key = `${state.code}:${state.handNo}:${state.claimAt}`;
-    if (asked.current === key) return;
+    if (attempted.has(key)) return;
 
     // The winner's own phone asks. The host is a backup in case that phone
     // locked or died mid-claim; everyone else stays out of it entirely.
@@ -56,7 +61,8 @@ export function ShowdownBar({
     const due = CONTEST_MS - (Date.now() - state.claimAt);
     const id = setTimeout(
       () => {
-        asked.current = key;
+        attempted.add(key);
+        if (attempted.size > 50) attempted.clear();
         void sendRef.current({ type: 'settle' });
       },
       Math.max(0, due) + (iClaimed ? 150 : 2000),
@@ -126,6 +132,17 @@ export function ShowdownBar({
           <div className="mt-2 text-center text-[11px] text-[var(--color-muted)]">
             {left > 0 ? 'Paying out…' : 'Settling…'}
           </div>
+        )}
+
+        {/* Always leave the host a way to finish the hand by hand. Without it a
+            payout the server won't accept leaves the table with nothing to press. */}
+        {isHost && (
+          <button
+            onClick={onDecide}
+            className="btn mt-1 w-full py-1.5 text-[11px] font-bold text-[var(--color-muted)]"
+          >
+            or award it yourself
+          </button>
         )}
       </div>,
     );

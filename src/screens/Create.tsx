@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Choice, Field, inputClass } from '../components/ui.tsx';
+import { Button, Choice, Field, inputClass, keepVisible } from '../components/ui.tsx';
 import { createGame } from '../lib/api.ts';
 import { lastName, playerId, rememberName, rememberRoom } from '../lib/session.ts';
 import { gameUrl, shareGame } from '../lib/share.ts';
@@ -89,7 +89,7 @@ export function Create({ onReady, onBack }: { onReady: (code: string) => void; o
   }
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-sm flex-col px-5 py-8">
+    <div className="mx-auto flex min-h-full w-full max-w-sm flex-col overflow-y-auto px-5 py-8 pb-[max(2rem,env(keyboard-inset-height,0px))]">
       <button onClick={onBack} className="btn mb-4 self-start text-sm text-[var(--color-muted)]">
         ← Back
       </button>
@@ -98,6 +98,7 @@ export function Create({ onReady, onBack }: { onReady: (code: string) => void; o
       <div className="space-y-5">
         <Field label="Your nickname">
           <input
+            {...keepVisible}
             className={inputClass}
             value={name}
             maxLength={14}
@@ -132,6 +133,7 @@ export function Create({ onReady, onBack }: { onReady: (code: string) => void; o
             ))}
           </div>
           <input
+            {...keepVisible}
             className={`${inputClass} mt-2`}
             inputMode="numeric"
             value={stack}

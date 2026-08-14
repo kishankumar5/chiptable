@@ -18,7 +18,14 @@ const GRACE_MS = 4000;
 const STALE_MS = 12_000;
 
 /** Commands the app sends on its own. Their failures stay out of the player's way. */
-const BACKGROUND_COMMANDS = new Set(['heartbeat', 'level-tick']);
+const BACKGROUND_COMMANDS = new Set(['heartbeat', 'level-tick', 'settle']);
+
+/**
+ * Commands we refuse to guess at. Painting a payout before the server agrees
+ * makes chips fly to a winner and then fly back when it is rolled back — and
+ * it tears down the showdown UI mid-request. Money waits for the server.
+ */
+const NO_OPTIMISTIC = new Set(['settle', 'award', 'undo']);
 
 export interface Game {
   state: GameState | null;
@@ -154,7 +161,7 @@ export function useGame(code: string): Game {
       // fails — it just retries on its own schedule.
       const silent = BACKGROUND_COMMANDS.has(cmd.type);
 
-      if (before) {
+      if (before && !NO_OPTIMISTIC.has(cmd.type)) {
         try {
           // Optimistic paint: same rules, zero round-trip.
           setState(reduce(before, { ...cmd, now: Date.now() }));
@@ -171,7 +178,8 @@ export function useGame(code: string): Game {
         apply(res.state, res.version);
         return true;
       } catch (e) {
-        if (before) setState(before); // roll the prediction back
+        // Only undo a prediction we actually made.
+        if (before && !NO_OPTIMISTIC.has(cmd.type)) setState(before);
         if (!silent) {
           setError(e instanceof Error ? e.message : "That didn't go through. Try again.");
         }
