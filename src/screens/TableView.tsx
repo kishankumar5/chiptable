@@ -12,6 +12,7 @@ import { MoneySheet } from '../components/MoneySheet.tsx';
 import { HandRecap } from '../components/HandRecap.tsx';
 import { HandRanks } from '../components/HandRanks.tsx';
 import { recordGame } from '../lib/ledger.ts';
+import { alert, stopFlash } from '../lib/notify.ts';
 import { HostPanel } from '../components/HostPanel.tsx';
 import { TourneyClock } from '../components/TourneyClock.tsx';
 import { EndScreen } from '../components/EndScreen.tsx';
@@ -139,6 +140,13 @@ export function TableView({ game, me, onLeave, onJoinNeeded }: Props) {
         play('hand');
         setTimeout(() => setBanner(null), 2600);
       }
+      const street = STREET_LABEL[state.street] ?? state.street.toUpperCase();
+      alert({
+        title: `${street} — ${fmt(totalPot(state))} in the pot`,
+        body: cue ? cue.split('\n')[0].toLowerCase().replace(/^deal/, 'Deal') : undefined,
+        tag: `street-${state.code}`,
+        flash: `♠ ${street}`,
+      });
     }
 
     if (state.handNo !== before.handNo && state.handNo > 0) {
@@ -153,8 +161,29 @@ export function TableView({ game, me, onLeave, onJoinNeeded }: Props) {
     if (state.turn === me && before.turn !== me) {
       play('turn');
       buzz([18, 60, 18]);
+      const owed = Math.max(0, state.currentBet - (player?.bet ?? 0));
+      alert({
+        title: 'Your turn ♠',
+        body: owed > 0 ? `${fmt(owed)} to call · ${fmt(totalPot(state))} in the pot` : 'Check or bet',
+        tag: `turn-${state.code}`,
+        flash: '♠ YOUR TURN',
+      });
     }
-  }, [state, me, fly]);
+
+  }, [state, me, fly, player?.bet]);
+
+  // Looking at the table is the only thing that stops the title flashing —
+  // clearing it on any state change would cancel an alert nobody has seen yet.
+  useEffect(() => {
+    const clear = () => {
+      if (!document.hidden) stopFlash();
+    };
+    document.addEventListener('visibilitychange', clear);
+    return () => {
+      document.removeEventListener('visibilitychange', clear);
+      stopFlash();
+    };
+  }, []);
 
   // The host's heartbeat is what lets the table notice they've vanished.
   useEffect(() => {

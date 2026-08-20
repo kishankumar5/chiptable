@@ -3,6 +3,12 @@ import type { Command, GameState, Player } from '../engine/types.ts';
 import { fmt } from '../engine/engine.ts';
 import { Button, Field, Sheet, inputClass } from './ui.tsx';
 import { isSoundOn, toggleSound } from '../lib/sound.ts';
+import {
+  alertsOn,
+  disableAlerts,
+  enableAlerts,
+  needsInstallForAlerts,
+} from '../lib/notify.ts';
 import { shareGame } from '../lib/share.ts';
 
 interface Props {
@@ -18,6 +24,7 @@ interface Props {
 /** Everything that isn't "whose turn is it" lives behind this one button. */
 export function HostPanel({ state, me, isHost, hostGone, open, onClose, send }: Props) {
   const [sound, setSound] = useState(isSoundOn());
+  const [alerts, setAlerts] = useState(alertsOn());
   const [sb, setSb] = useState(String(state.sb));
   const [bb, setBb] = useState(String(state.bb));
   const [editing, setEditing] = useState<string | null>(null);
@@ -65,6 +72,21 @@ export function HostPanel({ state, me, isHost, hostGone, open, onClose, send }: 
           >
             {sound ? '🔊 Sound On' : '🔇 Sound Off'}
           </Button>
+          {/* Only useful once the phone is out of your hand, so it only ever
+              fires while the table is off screen. */}
+          <Button
+            variant={alerts ? 'gold' : 'dark'}
+            onClick={async () => {
+              if (alerts) {
+                disableAlerts();
+                setAlerts(false);
+              } else {
+                setAlerts(await enableAlerts());
+              }
+            }}
+          >
+            {alerts ? '🔔 Alerts On' : '🔕 Alerts Off'}
+          </Button>
           <Button
             variant="dark"
             onClick={() => void send({ type: 'sit', sittingOut: !me.sittingOut })}
@@ -94,6 +116,13 @@ export function HostPanel({ state, me, isHost, hostGone, open, onClose, send }: 
             </Button>
           )}
         </section>
+
+        {alerts && needsInstallForAlerts() && (
+          <p className="-mt-1 text-center text-[11px] leading-relaxed text-amber-300/80">
+            On iPhone, pop-up alerts only work once ChipTable is added to your home
+            screen. Until then the tab title flashes when it's your turn.
+          </p>
+        )}
 
         {!isHost && state.mode === 'cash' && (
           <p className="-mt-1 text-center text-[11px] text-[var(--color-muted)]">
